@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
+  <!-- Settings / login overlay -->
   <div id="loginOverlay" class="overlay hidden">
     <div class="panel">
       <h2>Sign in to Travieso GPS</h2>
@@ -28,10 +29,15 @@
     <h1>Travieso GPS — Live Map</h1>
     <div class="controls">
       <button id="historyBtn" class="ghost">Show History</button>
+      <label class="switch">
+        <input id="showLabels" type="checkbox">
+        <span>Labels</span>
+      </label>
       <button id="logoutBtn" class="ghost">Settings</button>
       <span class="status">Status: <b id="status">Disconnected</b></span>
     </div>
   </header>
+
   <main>
     <aside>
       <div class="list-header">
@@ -42,9 +48,8 @@
     </aside>
     <section id="map"></section>
   </main>
-  <footer>
-    <small>© Travieso GPS</small>
-  </footer>
+
+  <footer><small>© Travieso GPS</small></footer>
 
   <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
   <script src="script.js"></script>
