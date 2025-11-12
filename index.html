@@ -8,24 +8,42 @@
   <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
+  <div id="loginOverlay" class="overlay hidden">
+    <div class="panel">
+      <h2>Sign in to Travieso GPS</h2>
+      <label>API URL
+        <input id="loginApiUrl" type="text" placeholder="https://travieso-gps-platform.onrender.com">
+      </label>
+      <label>API Key (optional for reads)
+        <input id="loginApiKey" type="password" placeholder="demo_key_1">
+      </label>
+      <div class="row">
+        <button id="loginBtn">Save & Continue</button>
+      </div>
+      <small class="hint">We store these in your browser only (localStorage) so the app remembers you.</small>
+    </div>
+  </div>
+
   <header>
     <h1>Travieso GPS — Live Map</h1>
     <div class="controls">
-      <label>API URL:
-        <input id="apiUrl" type="text" value="https://travieso-gps-platform.onrender.com" />
-      </label>
-      <button id="connectBtn">Connect</button>
+      <button id="historyBtn" class="ghost">Show History</button>
+      <button id="logoutBtn" class="ghost">Settings</button>
+      <span class="status">Status: <b id="status">Disconnected</b></span>
     </div>
   </header>
   <main>
     <aside>
-      <div class="list-header">Devices</div>
+      <div class="list-header">
+        <div>Devices</div>
+        <div class="mini">Auto-refresh: <span id="refreshSecs">10s</span></div>
+      </div>
       <ul id="deviceList"></ul>
     </aside>
     <section id="map"></section>
   </main>
   <footer>
-    <small>Status: <span id="status">Disconnected</span></small>
+    <small>© Travieso GPS</small>
   </footer>
 
   <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
