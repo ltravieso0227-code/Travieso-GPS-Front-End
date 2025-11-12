@@ -1,188 +1,232 @@
-(function(){
+(function () {
   const DEFAULT_REFRESH = 10_000; // 10s
-  let map, markers = new Map(), historyLayerId = 'device-history', ws;
-  let deviceList, statusEl, historyBtn, logoutBtn, overlay, apiUrl, apiKey;
-  let refreshTimer;
+  let map, markers = new Map(), ws;
+  const LINE_ID = 'device-history';
+  const PTS_ID  = 'device-history-pts';
+  let deviceList, statusEl, historyBtn, logoutBtn, overlay, popup;
+  let apiUrl, apiKey, refreshTimer;
 
-  function el(id){ return document.getElementById(id); }
-  function status(txt){ statusEl.textContent = txt; }
+  const el = id => document.getElementById(id);
+  const setStatus = t => statusEl.textContent = t;
 
-  function loadSettings(){
+  function loadSettings() {
     apiUrl = localStorage.getItem('apiUrl') || 'https://travieso-gps-platform.onrender.com';
     apiKey = localStorage.getItem('apiKey') || '';
-    const apiIn = document.getElementById('loginApiUrl');
-    const keyIn = document.getElementById('loginApiKey');
-    if(apiIn) apiIn.value = apiUrl;
-    if(keyIn) keyIn.value = apiKey;
+    el('loginApiUrl').value = apiUrl;
+    el('loginApiKey').value = apiKey;
   }
-  function saveSettings(newUrl, newKey){
-    apiUrl = newUrl.trim().replace(/\/$/,'');
-    apiKey = (newKey||'').trim();
+  function saveSettings(newUrl, newKey) {
+    apiUrl = newUrl.trim().replace(/\/$/, '');
+    apiKey = (newKey || '').trim();
     localStorage.setItem('apiUrl', apiUrl);
     localStorage.setItem('apiKey', apiKey);
   }
 
-  function initMap(center=[-80.1918,25.7617], zoom=9){
+  function initMap(center=[-80.1918, 25.7617], zoom=9) {
     map = new maplibregl.Map({
       container: 'map',
       style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
       center, zoom
     });
-    map.addControl(new maplibregl.NavigationControl({visualizePitch:true}), 'top-right');
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+    popup = new maplibregl.Popup({ closeButton:false, closeOnClick:false, maxWidth: '240px' });
   }
 
-  function setMarker(deviceId, lat, lng, status='idle', name='Device'){
+  function markerFor(deviceId, lat, lng, status='idle', name='Device') {
     let m = markers.get(deviceId);
-    const el = document.createElement('div');
-    el.className='ml-marker';
-    el.style.width='14px'; el.style.height='14px';
-    el.style.borderRadius='50%'; el.style.border='2px solid white';
-    el.style.boxShadow='0 0 6px rgba(0,0,0,.3)';
-    el.style.background = status==='moving' ? '#22c55e' : status==='offline' ? '#ef4444' : '#f59e0b';
-    el.title = name + ' (' + deviceId + ')';
-
-    if(!m){
-      m = new maplibregl.Marker({element:el}).setLngLat([lng, lat]).addTo(map);
+    const pin = document.createElement('div');
+    pin.style.cssText = 'width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.3)';
+    pin.style.background = status==='moving' ? '#22c55e' : status==='offline' ? '#ef4444' : '#f59e0b';
+    pin.title = `${name} (${deviceId})`;
+    if (!m) {
+      m = new maplibregl.Marker({ element: pin }).setLngLat([lng, lat]).addTo(map);
       markers.set(deviceId, m);
-    }else{
+    } else {
       m.setLngLat([lng, lat]);
       const old = m;
-      const newMarker = new maplibregl.Marker({element:el}).setLngLat([lng, lat]).addTo(map);
-      markers.set(deviceId, newMarker);
+      const next = new maplibregl.Marker({ element: pin }).setLngLat([lng, lat]).addTo(map);
+      markers.set(deviceId, next);
       old.remove();
     }
   }
 
-  function addDeviceToList(d){
+  function addDeviceToList(d) {
     const li = document.createElement('li');
-    li.innerHTML = '<div><strong>'+ (d.name||d.id) + '</strong>' +
-                   '<span class="badge '+(d.status||'idle')+'">'+(d.status||'idle')+'</span></div>' +
-                   '<div class="meta">'+ (d.id||'') + '</div>';
-    li.onclick = ()=> viewHistory(d.id);
+    li.innerHTML =
+      `<div><strong>${d.name || d.id}</strong>
+         <span class="badge ${d.status || 'idle'}">${d.status || 'idle'}</span></div>
+       <div class="meta">${d.id || ''}</div>`;
+    li.onclick = () => showHistory(d.id);
     deviceList.appendChild(li);
   }
 
-  async function fetchJSON(path){
-    const url = apiUrl.replace(/\/$/,'') + path;
+  async function fetchJSON(path) {
+    const url = apiUrl.replace(/\/$/, '') + path;
     const opts = { headers: {} };
-    if(apiKey) opts.headers['X-API-Key'] = apiKey;
+    if (apiKey) opts.headers['X-API-Key'] = apiKey;
     const r = await fetch(url, opts);
-    if(!r.ok) throw new Error('HTTP '+r.status);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     return await r.json();
   }
 
-  async function loadDevices(){
+  async function loadDevices() {
     deviceList.innerHTML = '';
     const devices = await fetchJSON('/devices');
-    devices.forEach(async (d)=>{
+    for (const d of devices) {
       addDeviceToList(d);
-      // last position
-      const rows = await fetchJSON('/devices/'+encodeURIComponent(d.id)+'/positions?limit=1');
-      if(rows.length){
+      const rows = await fetchJSON(`/devices/${encodeURIComponent(d.id)}/positions?limit=1`);
+      if (rows.length) {
         const p = rows[0];
-        const st = (p.speed||0)>2 ? 'moving' : 'idle';
-        setMarker(d.id, p.lat, p.lng, st, d.id);
+        const st = (p.speed || 0) > 2 ? 'moving' : 'idle';
+        markerFor(d.id, p.lat, p.lng, st, d.id);
       }
-    });
+    }
   }
 
-  function startAutoRefresh(){
+  function startAutoRefresh() {
     stopAutoRefresh();
-    refreshTimer = setInterval(async ()=>{
-      try{ await loadDevices(); status('Auto-refreshed'); }catch(_){}
+    refreshTimer = setInterval(async () => {
+      try { await loadDevices(); setStatus('Auto-refreshed'); } catch {}
     }, DEFAULT_REFRESH);
   }
-  function stopAutoRefresh(){
-    if(refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; }
+  function stopAutoRefresh() {
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   }
 
-  async function viewHistory(deviceId){
-    status('Loading history...');
-    // fetch last 100 points
-    const rows = await fetchJSON('/devices/'+encodeURIComponent(deviceId)+'/positions?limit=100');
-    const coords = rows.map(r=>[r.lng, r.lat]).filter(a=>Number.isFinite(a[0])&&Number.isFinite(a[1]));
-    if(!coords.length){ status('No history'); return; }
-
-    // center & fit
-    const bounds = new maplibregl.LngLatBounds();
-    coords.forEach(c=>bounds.extend(c));
-    map.fitBounds(bounds, {padding:40, duration:600});
-
-    // remove existing layer if any
-    if(map.getLayer(historyLayerId)){ map.removeLayer(historyLayerId); }
-    if(map.getSource(historyLayerId)){ map.removeSource(historyLayerId); }
-
-    const geo = { type:'FeatureCollection', features:[{ type:'Feature', geometry:{ type:'LineString', coordinates: coords }, properties:{} }]};
-    map.addSource(historyLayerId, { type:'geojson', data: geo });
+  function addHistoryLayers(geoPts, line, withLabels) {
+    // remove old
+    const old = [LINE_ID, PTS_ID, PTS_ID + '-labels'];
+    old.forEach(id => {
+      if (map.getLayer(id)) map.removeLayer(id);
+      if (map.getSource(id)) map.removeSource(id);
+    });
+    // line
+    map.addSource(LINE_ID, { type: 'geojson', data: line });
     map.addLayer({
-      id: historyLayerId,
-      type: 'line',
-      source: historyLayerId,
+      id: LINE_ID, type: 'line', source: LINE_ID,
       layout: { 'line-join':'round', 'line-cap':'round' },
       paint: { 'line-width': 4, 'line-color': '#4ade80' }
     });
-
-    status('History loaded');
+    // points
+    map.addSource(PTS_ID, { type: 'geojson', data: geoPts });
+    map.addLayer({
+      id: PTS_ID, type: 'circle', source: PTS_ID,
+      paint: {
+        'circle-radius': 3.5,
+        'circle-color': '#60a5fa',
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 1
+      }
+    });
+    // labels (optional)
+    if (withLabels) {
+      map.addLayer({
+        id: PTS_ID + '-labels', type: 'symbol', source: PTS_ID,
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-size': 11,
+          'text-offset': [0, 1.2],
+          'text-allow-overlap': false
+        },
+        paint: { 'text-color': '#cbd5e1', 'text-halo-color': '#0b1020', 'text-halo-width': 1.2 }
+      });
+    }
   }
 
-  function connectWS(){
-    try{
-      const base = apiUrl.trim().replace(/^http/,'ws').replace(/\/$/,'');
+  const fmtTs = iso => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
+
+  async function showHistory(deviceId) {
+    setStatus('Loading history...');
+    const rows = await fetchJSON(`/devices/${encodeURIComponent(deviceId)}/positions?limit=100`);
+    if (!rows.length) { setStatus('No history'); return; }
+
+    const coords = rows.map(r => [r.lng, r.lat]);
+    const pts = rows.map((r, i) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [r.lng, r.lat] },
+      properties: {
+        ts: r.ts || '',
+        speed: r.speed || 0,
+        label: (i % 5 === 0) ? (r.ts ? new Date(r.ts).toLocaleTimeString() : '') : ''
+      }
+    }));
+    const line   = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }] };
+    const geoPts = { type: 'FeatureCollection', features: pts };
+
+    // fit bounds
+    const bounds = new maplibregl.LngLatBounds();
+    coords.forEach(c => bounds.extend(c));
+    map.fitBounds(bounds, { padding: 40, duration: 600 });
+
+    const withLabels = el('showLabels').checked;
+    addHistoryLayers(geoPts, line, withLabels);
+    setStatus('History loaded');
+
+    // hover popup on points
+    map.on('mousemove', PTS_ID, e => {
+      const f = e.features && e.features[0];
+      if (!f) return;
+      const { ts, speed } = f.properties;
+      popup.setLngLat(e.lngLat)
+        .setHTML(`<b>${deviceId}</b><br>${ts ? 'Time: ' + fmtTs(ts) + '<br>' : ''}Speed: ${Number(speed || 0).toFixed(1)}`)
+        .addTo(map);
+    });
+    map.on('mouseleave', PTS_ID, () => popup.remove());
+  }
+
+  function connectWS() {
+    try {
+      const base = apiUrl.trim().replace(/^http/, 'ws').replace(/\/$/, '');
       ws = new WebSocket(base + '/ws');
-      ws.onopen = ()=> status('Live stream connected');
-      ws.onmessage = (evt)=>{
-        try{
-          const data = JSON.parse(evt.data);
-          if(data && data.type==='position'){
-            const st = (data.speed||0)>2 ? 'moving' : 'idle';
-            setMarker(data.device_id, data.lat, data.lng, st, data.device_id);
+      ws.onopen = () => setStatus('Live stream connected');
+      ws.onmessage = evt => {
+        try {
+          const d = JSON.parse(evt.data);
+          if (d && d.type === 'position') {
+            const st = (d.speed || 0) > 2 ? 'moving' : 'idle';
+            markerFor(d.device_id, d.lat, d.lng, st, d.device_id);
           }
-        }catch(e){ /* ignore */ }
+        } catch {}
       };
-      ws.onclose = ()=> status('Live stream disconnected');
-    }catch(e){ status('WS error'); }
+      ws.onclose = () => setStatus('Live stream disconnected');
+    } catch { setStatus('WS error'); }
   }
 
-  function showOverlay(show=true){
-    overlay.classList.toggle('hidden', !show);
-  }
+  function showOverlay(show=true){ overlay.classList.toggle('hidden', !show); }
 
-  window.addEventListener('DOMContentLoaded', ()=>{
+  // Boot
+  window.addEventListener('DOMContentLoaded', () => {
     deviceList = el('deviceList');
-    statusEl = el('status');
+    statusEl   = el('status');
     historyBtn = el('historyBtn');
-    logoutBtn = el('logoutBtn');
-    overlay = document.getElementById('loginOverlay');
+    logoutBtn  = el('logoutBtn');
+    overlay    = el('loginOverlay');
 
     loadSettings();
     initMap();
-    // login overlay only if no apiUrl configured
-    if(!localStorage.getItem('apiUrl')) showOverlay(true);
 
-    document.getElementById('loginBtn').onclick = ()=>{
-      const u = document.getElementById('loginApiUrl').value;
-      const k = document.getElementById('loginApiKey').value;
-      saveSettings(u, k);
+    if (!localStorage.getItem('apiUrl')) showOverlay(true);
+
+    el('loginBtn').onclick = () => {
+      saveSettings(el('loginApiUrl').value, el('loginApiKey').value);
       showOverlay(false);
-      // connect after save
-      loadDevices().catch(()=>status('Failed to load devices'));
+      loadDevices().catch(() => setStatus('Failed to load devices'));
       connectWS();
       startAutoRefresh();
     };
 
-    logoutBtn.onclick = ()=>{
-      // reuse overlay as "settings"
-      loadSettings();
-      showOverlay(true);
-    };
+    el('showLabels').addEventListener('change', () => {
+      // stored implicitly via history re-render if you toggle before/after
+      localStorage.setItem('showLabels', el('showLabels').checked ? '1' : '0');
+    });
 
-    historyBtn.onclick = ()=>{
+    logoutBtn.onclick = () => { loadSettings(); showOverlay(true); };
+    historyBtn.onclick = () => {
       const first = deviceList.querySelector('li strong');
-      if(first){ viewHistory(first.textContent); }
+      if (first) showHistory(first.textContent);
     };
 
-    // initial connect (uses defaults)
-    loadDevices().catch(()=>status('Failed to load devices'));
+    loadDevices().catch(() => setStatus('Failed to load devices'));
     connectWS();
     startAutoRefresh();
   });
