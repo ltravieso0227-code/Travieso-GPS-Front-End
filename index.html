@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Travieso GPS — Live Map</title>
+  <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <header>
+    <h1>Travieso GPS — Live Map</h1>
+    <div class="controls">
+      <label>API URL:
+        <input id="apiUrl" type="text" value="https://travieso-gps-platform.onrender.com" />
+      </label>
+      <button id="connectBtn">Connect</button>
+    </div>
+  </header>
+  <main>
+    <aside>
+      <div class="list-header">Devices</div>
+      <ul id="deviceList"></ul>
+    </aside>
+    <section id="map"></section>
+  </main>
+  <footer>
+    <small>Status: <span id="status">Disconnected</span></small>
+  </footer>
+
+  <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

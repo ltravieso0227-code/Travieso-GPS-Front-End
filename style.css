@@ -1,0 +1,19 @@
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#0b1020;color:#e6e9ef}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#12172b;border-bottom:1px solid #232a46}
+h1{margin:0;font-size:18px;font-weight:650;letter-spacing:.3px}
+.controls{display:flex;gap:8px;align-items:center}
+.controls input{width:420px;max-width:60vw;padding:8px;border-radius:8px;border:1px solid #2b3357;background:#0f1429;color:#e6e9ef}
+.controls button{padding:8px 12px;border-radius:8px;border:1px solid #3556d8;background:#4163ff;color:#fff;cursor:pointer}
+main{display:grid;grid-template-columns:320px 1fr;height:calc(100vh - 98px)}
+aside{background:#0f1429;border-right:1px solid #232a46;overflow:auto}
+.list-header{padding:10px 12px;border-bottom:1px solid #232a46;color:#9fb0ff;font-weight:600}
+#deviceList{list-style:none;margin:0;padding:0}
+#deviceList li{border-bottom:1px solid #1c2340;padding:10px 12px;cursor:pointer}
+#deviceList li:hover{background:#111939}
+#deviceList .meta{font-size:12px;color:#a4acc7;margin-top:3px}
+#map{height:100%;width:100%}
+footer{padding:8px 16px;background:#0f1429;border-top:1px solid #232a46;color:#a4acc7}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;margin-left:6px}
+.badge.moving{background:#093f2e;color:#9cfbc2;border:1px solid #1f7f5c}
+.badge.idle{background:#3f2e09;color:#f9e5b1;border:1px solid #7f5f1f}
+.badge.offline{background:#3f0912;color:#ffc2cb;border:1px solid #7f1f30}
