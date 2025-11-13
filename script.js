@@ -14,7 +14,13 @@
     apiKey = localStorage.getItem('apiKey') || '';
     el('loginApiUrl').value = apiUrl;
     el('loginApiKey').value = apiKey;
+    // labels toggle
+    const stored = localStorage.getItem('showLabels');
+    if (stored && el('showLabels')) {
+      el('showLabels').checked = stored === '1';
+    }
   }
+
   function saveSettings(newUrl, newKey) {
     apiUrl = newUrl.trim().replace(/\/$/, '');
     apiKey = (newKey || '').trim();
@@ -22,58 +28,64 @@
     localStorage.setItem('apiKey', apiKey);
   }
 
-  // ---- Satellite toggle control ------------------------------------------
-  class BasemapToggleControl {
-    constructor() {
-      this._map = null;
-      this._container = null;
-      this._satOn = false;
-    }
+  // --- Basemap toggle control (Map <-> Satellite) ---
 
-    onAdd(map) {
-      this._map = map;
-      const container = document.createElement('div');
-      container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+  class BasemapToggleControl {
+    onAdd(m) {
+      this._map = m;
+      this._satVisible = false;
 
       const btn = document.createElement('button');
       btn.type = 'button';
+      btn.className = 'maplibregl-ctrl-icon maplibregl-ctrl-basemap-toggle';
       btn.textContent = 'Sat';
-      btn.title = 'Toggle satellite basemap';
+      btn.style.padding = '4px 8px';
+      btn.style.fontSize = '12px';
+      btn.style.background = '#0f172a';
+      btn.style.color = '#e5e7eb';
+      btn.style.borderRadius = '4px';
+      btn.style.cursor = 'pointer';
+      btn.style.border = '1px solid #475569';
 
       btn.onclick = () => {
-        this._satOn = !this._satOn;
-        const vis = this._satOn ? 'visible' : 'none';
+        this._satVisible = !this._satVisible;
+        const vis = this._satVisible ? 'visible' : 'none';
         if (this._map.getLayer('satellite-layer')) {
           this._map.setLayoutProperty('satellite-layer', 'visibility', vis);
         }
-        btn.textContent = this._satOn ? 'Map' : 'Sat';
+        btn.textContent = this._satVisible ? 'Map' : 'Sat';
       };
 
+      const container = document.createElement('div');
+      container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
       container.appendChild(btn);
       this._container = container;
       return container;
     }
 
     onRemove() {
-      if (this._container && this._container.parentNode) {
-        this._container.parentNode.removeChild(this._container);
-      }
+      this._container.parentNode.removeChild(this._container);
       this._map = undefined;
     }
   }
-  // ------------------------------------------------------------------------
 
-  function initMap(center=[-80.1918, 25.7617], zoom=9) {
+  // --- Map init with satellite layer & toggle ---
+
+  function initMap(center = [-80.1918, 25.7617], zoom = 9) {
     map = new maplibregl.Map({
       container: 'map',
       style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-      center, zoom
+      center,
+      zoom
     });
 
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
-    popup = new maplibregl.Popup({ closeButton:false, closeOnClick:false, maxWidth: '240px' });
+    popup = new maplibregl.Popup({
+      closeButton: false,
+      closeOnClick: false,
+      maxWidth: '240px'
+    });
 
-    // When the style loads, add satellite layer + toggle control
     map.on('load', () => {
       // Satellite raster source (Esri World Imagery)
       if (!map.getSource('satellite')) {
@@ -89,31 +101,46 @@
         });
       }
 
-      // Insert satellite layer at the bottom so labels/roads stay on top
-      const firstLayerId = map.getStyle().layers[0].id;
+      // Find first label layer so satellite goes below labels but above base
+      const layers = map.getStyle().layers;
+      let labelLayerId = null;
+      for (const layer of layers) {
+        if (layer.type === 'symbol') {
+          labelLayerId = layer.id;
+          break;
+        }
+      }
+
+      // Satellite layer, hidden by default
       if (!map.getLayer('satellite-layer')) {
         map.addLayer(
           {
             id: 'satellite-layer',
             type: 'raster',
             source: 'satellite',
-            layout: { visibility: 'none' } // start hidden
+            layout: { visibility: 'none' }
           },
-          firstLayerId
+          labelLayerId || undefined
         );
       }
 
-      // Add Sat/Map toggle button
+      // Sat/Map toggle button
       map.addControl(new BasemapToggleControl(), 'top-right');
     });
   }
 
-  function markerFor(deviceId, lat, lng, status='idle', name='Device') {
+  // --- Markers & device list ---
+
+  function markerFor(deviceId, lat, lng, status = 'idle', name = 'Device') {
     let m = markers.get(deviceId);
+
     const pin = document.createElement('div');
-    pin.style.cssText = 'width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.3)';
-    pin.style.background = status==='moving' ? '#22c55e' : status==='offline' ? '#ef4444' : '#f59e0b';
+    pin.style.cssText =
+      'width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.3)';
+    pin.style.background =
+      status === 'moving' ? '#22c55e' : status === 'offline' ? '#ef4444' : '#f59e0b';
     pin.title = `${name} (${deviceId})`;
+
     if (!m) {
       m = new maplibregl.Marker({ element: pin }).setLngLat([lng, lat]).addTo(map);
       markers.set(deviceId, m);
@@ -135,6 +162,8 @@
     li.onclick = () => showHistory(d.id);
     deviceList.appendChild(li);
   }
+
+  // --- API helpers ---
 
   async function fetchJSON(path) {
     const url = apiUrl.replace(/\/$/, '') + path;
@@ -162,12 +191,23 @@
   function startAutoRefresh() {
     stopAutoRefresh();
     refreshTimer = setInterval(async () => {
-      try { await loadDevices(); setStatus('Auto-refreshed'); } catch {}
+      try {
+        await loadDevices();
+        setStatus('Auto-refreshed');
+      } catch {
+        // ignore
+      }
     }, DEFAULT_REFRESH);
   }
+
   function stopAutoRefresh() {
-    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
   }
+
+  // --- History trail ---
 
   function addHistoryLayers(geoPts, line, withLabels) {
     // remove old
@@ -176,17 +216,23 @@
       if (map.getLayer(id)) map.removeLayer(id);
       if (map.getSource(id)) map.removeSource(id);
     });
+
     // line
     map.addSource(LINE_ID, { type: 'geojson', data: line });
     map.addLayer({
-      id: LINE_ID, type: 'line', source: LINE_ID,
-      layout: { 'line-join':'round', 'line-cap':'round' },
+      id: LINE_ID,
+      type: 'line',
+      source: LINE_ID,
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
       paint: { 'line-width': 4, 'line-color': '#4ade80' }
     });
+
     // points
     map.addSource(PTS_ID, { type: 'geojson', data: geoPts });
     map.addLayer({
-      id: PTS_ID, type: 'circle', source: PTS_ID,
+      id: PTS_ID,
+      type: 'circle',
+      source: PTS_ID,
       paint: {
         'circle-radius': 3.5,
         'circle-color': '#60a5fa',
@@ -194,27 +240,45 @@
         'circle-stroke-width': 1
       }
     });
+
     // labels (optional)
     if (withLabels) {
       map.addLayer({
-        id: PTS_ID + '-labels', type: 'symbol', source: PTS_ID,
+        id: PTS_ID + '-labels',
+        type: 'symbol',
+        source: PTS_ID,
         layout: {
           'text-field': ['get', 'label'],
           'text-size': 11,
           'text-offset': [0, 1.2],
           'text-allow-overlap': false
         },
-        paint: { 'text-color': '#cbd5e1', 'text-halo-color': '#0b1020', 'text-halo-width': 1.2 }
+        paint: {
+          'text-color': '#cbd5e1',
+          'text-halo-color': '#0b1020',
+          'text-halo-width': 1.2
+        }
       });
     }
   }
 
-  const fmtTs = iso => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
+  const fmtTs = iso => {
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
+    }
+  };
 
   async function showHistory(deviceId) {
     setStatus('Loading history...');
-    const rows = await fetchJSON(`/devices/${encodeURIComponent(deviceId)}/positions?limit=100`);
-    if (!rows.length) { setStatus('No history'); return; }
+    const rows = await fetchJSON(
+      `/devices/${encodeURIComponent(deviceId)}/positions?limit=100`
+    );
+    if (!rows.length) {
+      setStatus('No history');
+      return;
+    }
 
     const coords = rows.map(r => [r.lng, r.lat]);
     const pts = rows.map((r, i) => ({
@@ -223,10 +287,25 @@
       properties: {
         ts: r.ts || '',
         speed: r.speed || 0,
-        label: (i % 5 === 0) ? (r.ts ? new Date(r.ts).toLocaleTimeString() : '') : ''
+        label:
+          i % 5 === 0
+            ? r.ts
+              ? new Date(r.ts).toLocaleTimeString()
+              : ''
+            : ''
       }
     }));
-    const line   = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }] };
+
+    const line = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: coords },
+          properties: {}
+        }
+      ]
+    };
     const geoPts = { type: 'FeatureCollection', features: pts };
 
     // fit bounds
@@ -243,12 +322,19 @@
       const f = e.features && e.features[0];
       if (!f) return;
       const { ts, speed } = f.properties;
-      popup.setLngLat(e.lngLat)
-        .setHTML(`<b>${deviceId}</b><br>${ts ? 'Time: ' + fmtTs(ts) + '<br>' : ''}Speed: ${Number(speed || 0).toFixed(1)}`)
+      popup
+        .setLngLat(e.lngLat)
+        .setHTML(
+          `<b>${deviceId}</b><br>${
+            ts ? 'Time: ' + fmtTs(ts) + '<br>' : ''
+          }Speed: ${Number(speed || 0).toFixed(1)}`
+        )
         .addTo(map);
     });
     map.on('mouseleave', PTS_ID, () => popup.remove());
   }
+
+  // --- Live WebSocket stream ---
 
   function connectWS() {
     try {
@@ -262,15 +348,24 @@
             const st = (d.speed || 0) > 2 ? 'moving' : 'idle';
             markerFor(d.device_id, d.lat, d.lng, st, d.device_id);
           }
-        } catch {}
+        } catch {
+          // ignore
+        }
       };
       ws.onclose = () => setStatus('Live stream disconnected');
-    } catch { setStatus('WS error'); }
+    } catch {
+      setStatus('WS error');
+    }
   }
 
-  function showOverlay(show=true){ overlay.classList.toggle('hidden', !show); }
+  // --- UI overlay ---
 
-  // Boot
+  function showOverlay(show = true) {
+    overlay.classList.toggle('hidden', !show);
+  }
+
+  // --- Boot ---
+
   window.addEventListener('DOMContentLoaded', () => {
     deviceList = el('deviceList');
     statusEl   = el('status');
@@ -291,12 +386,17 @@
       startAutoRefresh();
     };
 
-    el('showLabels').addEventListener('change', () => {
-      // stored implicitly via history re-render if you toggle before/after
-      localStorage.setItem('showLabels', el('showLabels').checked ? '1' : '0');
-    });
+    if (el('showLabels')) {
+      el('showLabels').addEventListener('change', () => {
+        localStorage.setItem('showLabels', el('showLabels').checked ? '1' : '0');
+      });
+    }
 
-    logoutBtn.onclick = () => { loadSettings(); showOverlay(true); };
+    logoutBtn.onclick = () => {
+      loadSettings();
+      showOverlay(true);
+    };
+
     historyBtn.onclick = () => {
       const first = deviceList.querySelector('li strong');
       if (first) showHistory(first.textContent);
