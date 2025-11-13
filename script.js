@@ -22,14 +22,90 @@
     localStorage.setItem('apiKey', apiKey);
   }
 
+  // ---- Satellite toggle control ------------------------------------------
+  class BasemapToggleControl {
+    constructor() {
+      this._map = null;
+      this._container = null;
+      this._satOn = false;
+    }
+
+    onAdd(map) {
+      this._map = map;
+      const container = document.createElement('div');
+      container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = 'Sat';
+      btn.title = 'Toggle satellite basemap';
+
+      btn.onclick = () => {
+        this._satOn = !this._satOn;
+        const vis = this._satOn ? 'visible' : 'none';
+        if (this._map.getLayer('satellite-layer')) {
+          this._map.setLayoutProperty('satellite-layer', 'visibility', vis);
+        }
+        btn.textContent = this._satOn ? 'Map' : 'Sat';
+      };
+
+      container.appendChild(btn);
+      this._container = container;
+      return container;
+    }
+
+    onRemove() {
+      if (this._container && this._container.parentNode) {
+        this._container.parentNode.removeChild(this._container);
+      }
+      this._map = undefined;
+    }
+  }
+  // ------------------------------------------------------------------------
+
   function initMap(center=[-80.1918, 25.7617], zoom=9) {
     map = new maplibregl.Map({
       container: 'map',
       style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
       center, zoom
     });
+
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
     popup = new maplibregl.Popup({ closeButton:false, closeOnClick:false, maxWidth: '240px' });
+
+    // When the style loads, add satellite layer + toggle control
+    map.on('load', () => {
+      // Satellite raster source (Esri World Imagery)
+      if (!map.getSource('satellite')) {
+        map.addSource('satellite', {
+          type: 'raster',
+          tiles: [
+            'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+          ],
+          tileSize: 256,
+          attribution:
+            'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, ' +
+            'Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+        });
+      }
+
+      // Insert satellite layer at the bottom so labels/roads stay on top
+      const firstLayerId = map.getStyle().layers[0].id;
+      if (!map.getLayer('satellite-layer')) {
+        map.addLayer(
+          {
+            id: 'satellite-layer',
+            type: 'raster',
+            source: 'satellite',
+            layout: { visibility: 'none' } // start hidden
+          },
+          firstLayerId
+        );
+      }
+
+      // Add Sat/Map toggle button
+      map.addControl(new BasemapToggleControl(), 'top-right');
+    });
   }
 
   function markerFor(deviceId, lat, lng, status='idle', name='Device') {
