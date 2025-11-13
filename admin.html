@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Admin – Users & Devices</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #020617;
+      color: #e5e7eb;
+      display: flex;
+      min-height: 100vh;
+    }
+    .sidebar {
+      width: 260px;
+      border-right: 1px solid #1f2937;
+      padding: 1rem;
+      box-sizing: border-box;
+      background: #020617;
+    }
+    .main {
+      flex: 1;
+      padding: 1rem 1.25rem;
+      box-sizing: border-box;
+    }
+    h1 {
+      font-size: 1.1rem;
+      margin: 0 0 0.75rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #9ca3af;
+    }
+    h2 {
+      font-size: 0.95rem;
+      margin: 1rem 0 0.5rem;
+      color: #e5e7eb;
+    }
+    label {
+      display: block;
+      font-size: 0.8rem;
+      margin-bottom: 0.25rem;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    input[type="text"],
+    input[type="email"],
+    input[type="url"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.4rem 0.5rem;
+      border-radius: 0.35rem;
+      border: 1px solid #374151;
+      background: #020617;
+      color: #e5e7eb;
+      font-size: 0.85rem;
+    }
+    input:focus {
+      outline: none;
+      border-color: #38bdf8;
+    }
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 0.4rem 0.8rem;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      background: #22c55e;
+      color: #022c22;
+      margin-top: 0.4rem;
+    }
+    button[disabled] {
+      opacity: 0.6;
+      cursor: default;
+    }
+    .small {
+      font-size: 0.75rem;
+      color: #9ca3af;
+      margin-top: 0.5rem;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0.25rem 0 0;
+      max-height: 60vh;
+      overflow-y: auto;
+    }
+    li.user-item {
+      padding: 0.35rem 0.45rem;
+      border-radius: 0.35rem;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 0.05rem;
+    }
+    li.user-item:hover {
+      background: #020617;
+      border: 1px solid #1f2937;
+    }
+    li.user-item.active {
+      background: #0b1120;
+      border: 1px solid #38bdf8;
+    }
+    .user-name {
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .user-email {
+      font-size: 0.75rem;
+      color: #9ca3af;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.05rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      border: 1px solid #4b5563;
+      margin-top: 0.15rem;
+      color: #e5e7eb;
+    }
+    .status-bar {
+      font-size: 0.78rem;
+      color: #9ca3af;
+      margin-bottom: 0.5rem;
+      min-height: 1em;
+    }
+    .device-list {
+      border: 1px solid #1f2937;
+      border-radius: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      max-height: 60vh;
+      overflow-y: auto;
+      background: #020617;
+    }
+    .device-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.25rem 0;
+      font-size: 0.8rem;
+      border-bottom: 1px solid #111827;
+    }
+    .device-row:last-child {
+      border-bottom: none;
+    }
+    .device-id {
+      font-weight: 500;
+      color: #e5e7eb;
+    }
+    .device-meta {
+      color: #9ca3af;
+      font-size: 0.75rem;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.05rem 0.4rem;
+      border-radius: 999px;
+      border: 1px solid #374151;
+      font-size: 0.7rem;
+      margin-left: 0.25rem;
+    }
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+    a {
+      color: #38bdf8;
+      text-decoration: none;
+      font-size: 0.8rem;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h1>Admin Panel</h1>
+
+    <h2>API Settings</h2>
+    <label for="apiUrl">Backend API URL</label>
+    <input type="url" id="apiUrl" placeholder="https://travieso-gps-platform.onrender.com" />
+    <div class="small">
+      This should match your backend URL.
+    </div>
+    <button id="saveApiBtn">Save API URL</button>
+
+    <h2 style="margin-top:1.5rem;">Create User</h2>
+    <label for="userName">Name</label>
+    <input type="text" id="userName" placeholder="Repo Team Miami" />
+    <label for="userEmail">Email</label>
+    <input type="email" id="userEmail" placeholder="repo@example.com" />
+    <button id="createUserBtn">Create User</button>
+    <div class="small" id="userCreateStatus"></div>
+
+    <h2 style="margin-top:1.5rem;">Users</h2>
+    <div class="small">Click a user to manage their devices.</div>
+    <ul id="userList"></ul>
+  </div>
+
+  <div class="main">
+    <div class="top-bar">
+      <div>
+        <strong>Devices Assigned to Selected User</strong>
+      </div>
+      <div>
+        <a href="index.html">&larr; Back to Map</a>
+      </div>
+    </div>
+
+    <div class="status-bar" id="statusBar">Select a user to view and assign devices.</div>
+
+    <div class="device-list" id="deviceList">
+      <!-- devices with checkboxes will go here -->
+    </div>
+
+    <button id="saveAssignmentsBtn" disabled>Save Assignments</button>
+    <div class="small" id="assignStatus"></div>
+  </div>
+
+<script>
+  const apiUrlInput = document.getElementById("apiUrl");
+  const saveApiBtn = document.getElementById("saveApiBtn");
+  const userNameInput = document.getElementById("userName");
+  const userEmailInput = document.getElementById("userEmail");
+  const createUserBtn = document.getElementById("createUserBtn");
+  const userCreateStatus = document.getElementById("userCreateStatus");
+  const userList = document.getElementById("userList");
+  const deviceList = document.getElementById("deviceList");
+  const statusBar = document.getElementById("statusBar");
+  const saveAssignmentsBtn = document.getElementById("saveAssignmentsBtn");
+  const assignStatus = document.getElementById("assignStatus");
+
+  let currentApiUrl = "";
+  let selectedUserId = null;
+  let assignedDeviceIds = new Set();
+
+  function loadApiUrl() {
+    const stored = localStorage.getItem("adminApiUrl");
+    currentApiUrl = stored || "https://travieso-gps-platform.onrender.com";
+    apiUrlInput.value = currentApiUrl;
+  }
+
+  function saveApiUrl() {
+    currentApiUrl = apiUrlInput.value.trim().replace(/\/$/, "");
+    localStorage.setItem("adminApiUrl", currentApiUrl);
+    statusBar.textContent = "API URL saved: " + currentApiUrl;
+  }
+
+  async function fetchJSON(path, opts = {}) {
+    const url = currentApiUrl.replace(/\/$/, "") + path;
+    const res = await fetch(url, opts);
+    if (!res.ok) {
+      throw new Error("HTTP " + res.status);
+    }
+    return await res.json();
+  }
+
+  async function loadUsers() {
+    userList.innerHTML = "";
+    statusBar.textContent = "Loading users...";
+    try {
+      const users = await fetchJSON("/users");
+      if (!users.length) {
+        statusBar.textContent = "No users yet. Create one on the left.";
+      } else {
+        statusBar.textContent = "Select a user to manage their devices.";
+      }
+      for (const u of users) {
+        const li = document.createElement("li");
+        li.className = "user-item";
+        li.dataset.userId = u.id;
+        li.innerHTML = `
+          <div class="user-name">${u.name}</div>
+          <div class="user-email">${u.email}</div>
+          <div class="badge">${u.role}</div>
+        `;
+        li.onclick = () => selectUser(u.id);
+        userList.appendChild(li);
+      }
+    } catch (err) {
+      console.error(err);
+      statusBar.textContent = "Error loading users: " + err.message;
+    }
+  }
+
+  async function selectUser(userId) {
+    selectedUserId = userId;
+    assignedDeviceIds = new Set();
+    assignStatus.textContent = "";
+    saveAssignmentsBtn.disabled = false;
+
+    // highlight selected
+    Array.from(userList.children).forEach(li => {
+      li.classList.toggle("active", li.dataset.userId === userId);
+    });
+
+    statusBar.textContent = "Loading devices for selected user...";
+
+    try {
+      // 1) load ALL devices
+      const allDevices = await fetchJSON("/devices");
+
+      // 2) load user's assigned devices
+      const userDevices = await fetchJSON(`/users/${encodeURIComponent(userId)}/devices`);
+      const assignedSet = new Set(userDevices.map(d => d.id));
+      assignedDeviceIds = assignedSet;
+
+      // 3) render list with checkboxes
+      deviceList.innerHTML = "";
+      if (!allDevices.length) {
+        deviceList.textContent = "No devices found.";
+      } else {
+        for (const d of allDevices) {
+          const row = document.createElement("div");
+          row.className = "device-row";
+
+          const checked = assignedSet.has(d.id);
+
+          row.innerHTML = `
+            <input type="checkbox" class="device-checkbox" data-device-id="${d.id}" ${checked ? "checked" : ""} />
+            <div>
+              <div class="device-id">${d.name || d.id}</div>
+              <div class="device-meta">
+                ID: ${d.id}
+                <span class="chip">${d.status || "unknown"}</span>
+              </div>
+            </div>
+          `;
+          deviceList.appendChild(row);
+        }
+
+        // attach listeners
+        deviceList.querySelectorAll(".device-checkbox").forEach(cb => {
+          cb.addEventListener("change", () => {
+            const devId = cb.dataset.deviceId;
+            if (cb.checked) {
+              assignedDeviceIds.add(devId);
+            } else {
+              assignedDeviceIds.delete(devId);
+            }
+          });
+        });
+      }
+
+      statusBar.textContent = "Editing assignments for selected user.";
+    } catch (err) {
+      console.error(err);
+      statusBar.textContent = "Error loading devices: " + err.message;
+    }
+  }
+
+  async function handleCreateUser() {
+    userCreateStatus.textContent = "";
+    const name = userNameInput.value.trim();
+    const email = userEmailInput.value.trim();
+    if (!name || !email) {
+      userCreateStatus.textContent = "Name and email are required.";
+      return;
+    }
+    createUserBtn.disabled = true;
+    try {
+      const body = JSON.stringify({ name, email });
+      const user = await fetchJSON("/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body
+      });
+      userCreateStatus.textContent = "User created: " + user.name;
+      userNameInput.value = "";
+      userEmailInput.value = "";
+      await loadUsers();
+    } catch (err) {
+      console.error(err);
+      userCreateStatus.textContent = "Error creating user: " + err.message;
+    } finally {
+      createUserBtn.disabled = false;
+    }
+  }
+
+  async function saveAssignments() {
+    if (!selectedUserId) return;
+    assignStatus.textContent = "Saving assignments...";
+    saveAssignmentsBtn.disabled = true;
+    try {
+      const ids = Array.from(assignedDeviceIds);
+      await fetchJSON(`/users/${encodeURIComponent(selectedUserId)}/devices`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_ids: ids })
+      });
+      assignStatus.textContent = "Assignments saved.";
+    } catch (err) {
+      console.error(err);
+      assignStatus.textContent = "Error saving assignments: " + err.message;
+    } finally {
+      saveAssignmentsBtn.disabled = false;
+    }
+  }
+
+  // Wire up events
+  saveApiBtn.addEventListener("click", saveApiUrl);
+  createUserBtn.addEventListener("click", handleCreateUser);
+  saveAssignmentsBtn.addEventListener("click", saveAssignments);
+
+  // Boot
+  loadApiUrl();
+  loadUsers();
+</script>
+</body>
+</html>
