@@ -1,4 +1,3 @@
-<script>
 (function () {
   const DEFAULT_REFRESH = 10_000; // 10s
   let map, markers = new Map(), ws;
@@ -137,7 +136,6 @@
       m = new maplibregl.Marker({ element: pin }).setLngLat([lng, lat]).addTo(map);
       markers.set(deviceId, m);
     } else {
-      // remove old marker and replace with new element so click handler & color refresh
       const old = m;
       const next = new maplibregl.Marker({ element: pin }).setLngLat([lng, lat]).addTo(map);
       markers.set(deviceId, next);
@@ -200,20 +198,19 @@
   }
 
   function addHistoryLayers(geoPts, line, withLabels) {
-    // remove old
     const old = [LINE_ID, PTS_ID, PTS_ID + '-labels'];
     old.forEach(id => {
       if (map.getLayer(id)) map.removeLayer(id);
       if (map.getSource(id)) map.removeSource(id);
     });
-    // line
+
     map.addSource(LINE_ID, { type: 'geojson', data: line });
     map.addLayer({
       id: LINE_ID, type: 'line', source: LINE_ID,
       layout: { 'line-join':'round', 'line-cap':'round' },
       paint: { 'line-width': 4, 'line-color': '#4ade80' }
     });
-    // points
+
     map.addSource(PTS_ID, { type: 'geojson', data: geoPts });
     map.addLayer({
       id: PTS_ID, type: 'circle', source: PTS_ID,
@@ -224,7 +221,7 @@
         'circle-stroke-width': 1
       }
     });
-    // labels (optional)
+
     if (withLabels) {
       map.addLayer({
         id: PTS_ID + '-labels', type: 'symbol', source: PTS_ID,
@@ -282,7 +279,6 @@
     addHistoryLayers(geoPts, line, withLabels);
     setStatus('History loaded');
 
-    // hover popup on points
     map.on('mousemove', PTS_ID, e => {
       const f = e.features && e.features[0];
       if (!f) return;
@@ -322,7 +318,6 @@
     overlay.classList.toggle('hidden', !show);
   }
 
-  // Boot
   window.addEventListener('DOMContentLoaded', () => {
     deviceList = el('deviceList');
     statusEl   = el('status');
@@ -351,7 +346,6 @@
       showLabels.addEventListener('change', () => {
         localStorage.setItem('showLabels', showLabels.checked ? '1' : '0');
       });
-      // restore saved preference
       const saved = localStorage.getItem('showLabels');
       if (saved === '1') showLabels.checked = true;
     }
@@ -375,4 +369,3 @@
     startAutoRefresh();
   });
 })();
-</script>
