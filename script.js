@@ -1,3 +1,4 @@
+<script>
 (function () {
   const DEFAULT_REFRESH = 10_000; // 10s
   let map, markers = new Map(), ws;
@@ -7,145 +8,136 @@
   let apiUrl, apiKey, refreshTimer;
 
   const el = id => document.getElementById(id);
-  const setStatus = t => statusEl.textContent = t;
+  const setStatus = t => { if (statusEl) statusEl.textContent = t; };
 
   function loadSettings() {
     apiUrl = localStorage.getItem('apiUrl') || 'https://travieso-gps-platform.onrender.com';
     apiKey = localStorage.getItem('apiKey') || '';
-    el('loginApiUrl').value = apiUrl;
-    el('loginApiKey').value = apiKey;
-    // labels toggle
-    const stored = localStorage.getItem('showLabels');
-    if (stored && el('showLabels')) {
-      el('showLabels').checked = stored === '1';
-    }
+    const urlInput = el('loginApiUrl');
+    const keyInput = el('loginApiKey');
+    if (urlInput) urlInput.value = apiUrl;
+    if (keyInput) keyInput.value = apiKey;
   }
 
   function saveSettings(newUrl, newKey) {
-    apiUrl = newUrl.trim().replace(/\/$/, '');
+    apiUrl = (newUrl || '').trim().replace(/\/$/, '');
     apiKey = (newKey || '').trim();
     localStorage.setItem('apiUrl', apiUrl);
     localStorage.setItem('apiKey', apiKey);
   }
 
-  // --- Basemap toggle control (Map <-> Satellite) ---
-
-  class BasemapToggleControl {
-    onAdd(m) {
-      this._map = m;
-      this._satVisible = false;
-
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'maplibregl-ctrl-icon maplibregl-ctrl-basemap-toggle';
-      btn.textContent = 'Sat';
-      btn.style.padding = '4px 8px';
-      btn.style.fontSize = '12px';
-      btn.style.background = '#0f172a';
-      btn.style.color = '#e5e7eb';
-      btn.style.borderRadius = '4px';
-      btn.style.cursor = 'pointer';
-      btn.style.border = '1px solid #475569';
-
-      btn.onclick = () => {
-        this._satVisible = !this._satVisible;
-        const vis = this._satVisible ? 'visible' : 'none';
-        if (this._map.getLayer('satellite-layer')) {
-          this._map.setLayoutProperty('satellite-layer', 'visibility', vis);
-        }
-        btn.textContent = this._satVisible ? 'Map' : 'Sat';
-      };
-
-      const container = document.createElement('div');
-      container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
-      container.appendChild(btn);
-      this._container = container;
-      return container;
-    }
-
-    onRemove() {
-      this._container.parentNode.removeChild(this._container);
-      this._map = undefined;
-    }
-  }
-
-  // --- Map init with satellite layer & toggle ---
-
-  function initMap(center = [-80.1918, 25.7617], zoom = 9) {
+  function initMap(center=[-80.1918, 25.7617], zoom=9) {
     map = new maplibregl.Map({
       container: 'map',
       style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
       center,
       zoom
     });
-
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+
+    // Used for hover popups on history points
     popup = new maplibregl.Popup({
       closeButton: false,
       closeOnClick: false,
       maxWidth: '240px'
     });
 
-    map.on('load', () => {
-      // Satellite raster source (Esri World Imagery)
-      if (!map.getSource('satellite')) {
-        map.addSource('satellite', {
-          type: 'raster',
-          tiles: [
-            'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-          ],
-          tileSize: 256,
-          attribution:
-            'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, ' +
-            'Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+    // Optional satellite toggle if you have a checkbox with id="satToggle"
+    const satToggle = el('satToggle');
+    if (satToggle) {
+      satToggle.addEventListener('change', () => {
+        const isSat = satToggle.checked;
+        const styleUrl = isSat
+          ? 'https://api.maptiler.com/maps/hybrid/style.json?key=GET_YOUR_KEY'
+          : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+        const c = map.getCenter();
+        const z = map.getZoom();
+        map.setStyle(styleUrl);
+        map.once('styledata', () => {
+          map.setCenter(c);
+          map.setZoom(z);
         });
-      }
-
-      // Find first label layer so satellite goes below labels but above base
-      const layers = map.getStyle().layers;
-      let labelLayerId = null;
-      for (const layer of layers) {
-        if (layer.type === 'symbol') {
-          labelLayerId = layer.id;
-          break;
-        }
-      }
-
-      // Satellite layer, hidden by default
-      if (!map.getLayer('satellite-layer')) {
-        map.addLayer(
-          {
-            id: 'satellite-layer',
-            type: 'raster',
-            source: 'satellite',
-            layout: { visibility: 'none' }
-          },
-          labelLayerId || undefined
-        );
-      }
-
-      // Sat/Map toggle button
-      map.addControl(new BasemapToggleControl(), 'top-right');
-    });
+      });
+    }
   }
 
-  // --- Markers & device list ---
+  async function showDevicePopup(deviceId, lngLat) {
+    try {
+      const detail = await fetchJSON(`/devices/${encodeURIComponent(deviceId)}/detail`);
+      const name = detail.name || deviceId;
+      const asset = detail.asset_type ? ` • ${detail.asset_type}` : '';
+      const battery = (detail.battery != null) ? ` • <strong>Battery:</strong> ${detail.battery}%` : '';
+      const lastSeen = detail.last_seen ? new Date(detail.last_seen).toLocaleString() : '—';
 
-  function markerFor(deviceId, lat, lng, status = 'idle', name = 'Device') {
+      const html = `
+        <div style="min-width:220px; max-width:260px; font-family:system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+          <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${name}</div>
+          <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">
+            ID: ${deviceId}${asset}
+          </div>
+          ${detail.photo_url ? `
+            <div style="margin-bottom:6px;">
+              <img src="${detail.photo_url}" alt="" style="width:100%;max-height:140px;object-fit:cover;border-radius:6px;border:1px solid #111827;" />
+            </div>` : ''}
+          <div style="font-size:12px;margin-bottom:4px;">
+            <strong>Status:</strong> ${detail.status || 'unknown'}${battery}
+          </div>
+          <div style="font-size:12px;margin-bottom:4px;">
+            <strong>Last Seen:</strong> ${lastSeen}
+          </div>
+          ${detail.description ? `
+            <div style="font-size:12px;margin-bottom:4px;">
+              <strong>Description:</strong> ${detail.description}
+            </div>` : ''}
+          ${detail.notes ? `
+            <div style="font-size:12px;">
+              <strong>Notes:</strong> ${detail.notes}
+            </div>` : ''}
+        </div>
+      `;
+
+      new maplibregl.Popup({
+        closeButton: true,
+        closeOnClick: true,
+        maxWidth: '260px'
+      })
+        .setLngLat(lngLat)
+        .setHTML(html)
+        .addTo(map);
+    } catch (err) {
+      console.error(err);
+      new maplibregl.Popup({
+        closeButton: true,
+        closeOnClick: true,
+        maxWidth: '220px'
+      })
+        .setLngLat(lngLat)
+        .setHTML(`<div style="font-size:12px;">Failed to load details for <strong>${deviceId}</strong>.</div>`)
+        .addTo(map);
+    }
+  }
+
+  function markerFor(deviceId, lat, lng, status='idle', name='Device') {
     let m = markers.get(deviceId);
 
     const pin = document.createElement('div');
-    pin.style.cssText =
-      'width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.3)';
-    pin.style.background =
-      status === 'moving' ? '#22c55e' : status === 'offline' ? '#ef4444' : '#f59e0b';
+    pin.style.cssText = 'width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.3);cursor:pointer;';
+    pin.style.background = status === 'moving'
+      ? '#22c55e'
+      : status === 'offline'
+      ? '#ef4444'
+      : '#f59e0b';
     pin.title = `${name} (${deviceId})`;
+
+    pin.addEventListener('click', () => {
+      showDevicePopup(deviceId, [lng, lat]);
+    });
 
     if (!m) {
       m = new maplibregl.Marker({ element: pin }).setLngLat([lng, lat]).addTo(map);
       markers.set(deviceId, m);
     } else {
-      m.setLngLat([lng, lat]);
+      // remove old marker and replace with new element so click handler & color refresh
       const old = m;
       const next = new maplibregl.Marker({ element: pin }).setLngLat([lng, lat]).addTo(map);
       markers.set(deviceId, next);
@@ -154,6 +146,7 @@
   }
 
   function addDeviceToList(d) {
+    if (!deviceList) return;
     const li = document.createElement('li');
     li.innerHTML =
       `<div><strong>${d.name || d.id}</strong>
@@ -162,8 +155,6 @@
     li.onclick = () => showHistory(d.id);
     deviceList.appendChild(li);
   }
-
-  // --- API helpers ---
 
   async function fetchJSON(path) {
     const url = apiUrl.replace(/\/$/, '') + path;
@@ -175,6 +166,7 @@
   }
 
   async function loadDevices() {
+    if (!deviceList) return;
     deviceList.innerHTML = '';
     const devices = await fetchJSON('/devices');
     for (const d of devices) {
@@ -194,8 +186,8 @@
       try {
         await loadDevices();
         setStatus('Auto-refreshed');
-      } catch {
-        // ignore
+      } catch (err) {
+        console.error(err);
       }
     }, DEFAULT_REFRESH);
   }
@@ -207,8 +199,6 @@
     }
   }
 
-  // --- History trail ---
-
   function addHistoryLayers(geoPts, line, withLabels) {
     // remove old
     const old = [LINE_ID, PTS_ID, PTS_ID + '-labels'];
@@ -216,23 +206,17 @@
       if (map.getLayer(id)) map.removeLayer(id);
       if (map.getSource(id)) map.removeSource(id);
     });
-
     // line
     map.addSource(LINE_ID, { type: 'geojson', data: line });
     map.addLayer({
-      id: LINE_ID,
-      type: 'line',
-      source: LINE_ID,
-      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      id: LINE_ID, type: 'line', source: LINE_ID,
+      layout: { 'line-join':'round', 'line-cap':'round' },
       paint: { 'line-width': 4, 'line-color': '#4ade80' }
     });
-
     // points
     map.addSource(PTS_ID, { type: 'geojson', data: geoPts });
     map.addLayer({
-      id: PTS_ID,
-      type: 'circle',
-      source: PTS_ID,
+      id: PTS_ID, type: 'circle', source: PTS_ID,
       paint: {
         'circle-radius': 3.5,
         'circle-color': '#60a5fa',
@@ -240,13 +224,10 @@
         'circle-stroke-width': 1
       }
     });
-
     // labels (optional)
     if (withLabels) {
       map.addLayer({
-        id: PTS_ID + '-labels',
-        type: 'symbol',
-        source: PTS_ID,
+        id: PTS_ID + '-labels', type: 'symbol', source: PTS_ID,
         layout: {
           'text-field': ['get', 'label'],
           'text-size': 11,
@@ -263,22 +244,15 @@
   }
 
   const fmtTs = iso => {
-    try {
-      return new Date(iso).toLocaleString();
-    } catch {
-      return iso;
-    }
+    try { return new Date(iso).toLocaleString(); }
+    catch { return iso; }
   };
 
   async function showHistory(deviceId) {
+    if (!map) return;
     setStatus('Loading history...');
-    const rows = await fetchJSON(
-      `/devices/${encodeURIComponent(deviceId)}/positions?limit=100`
-    );
-    if (!rows.length) {
-      setStatus('No history');
-      return;
-    }
+    const rows = await fetchJSON(`/devices/${encodeURIComponent(deviceId)}/positions?limit=100`);
+    if (!rows.length) { setStatus('No history'); return; }
 
     const coords = rows.map(r => [r.lng, r.lat]);
     const pts = rows.map((r, i) => ({
@@ -287,33 +261,24 @@
       properties: {
         ts: r.ts || '',
         speed: r.speed || 0,
-        label:
-          i % 5 === 0
-            ? r.ts
-              ? new Date(r.ts).toLocaleTimeString()
-              : ''
-            : ''
+        label: (i % 5 === 0) ? (r.ts ? new Date(r.ts).toLocaleTimeString() : '') : ''
       }
     }));
-
-    const line = {
+    const line   = {
       type: 'FeatureCollection',
-      features: [
-        {
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: coords },
-          properties: {}
-        }
-      ]
+      features: [{
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: coords },
+        properties: {}
+      }]
     };
     const geoPts = { type: 'FeatureCollection', features: pts };
 
-    // fit bounds
     const bounds = new maplibregl.LngLatBounds();
     coords.forEach(c => bounds.extend(c));
     map.fitBounds(bounds, { padding: 40, duration: 600 });
 
-    const withLabels = el('showLabels').checked;
+    const withLabels = !!(el('showLabels') && el('showLabels').checked);
     addHistoryLayers(geoPts, line, withLabels);
     setStatus('History loaded');
 
@@ -322,19 +287,12 @@
       const f = e.features && e.features[0];
       if (!f) return;
       const { ts, speed } = f.properties;
-      popup
-        .setLngLat(e.lngLat)
-        .setHTML(
-          `<b>${deviceId}</b><br>${
-            ts ? 'Time: ' + fmtTs(ts) + '<br>' : ''
-          }Speed: ${Number(speed || 0).toFixed(1)}`
-        )
+      popup.setLngLat(e.lngLat)
+        .setHTML(`<b>${deviceId}</b><br>${ts ? 'Time: ' + fmtTs(ts) + '<br>' : ''}Speed: ${Number(speed || 0).toFixed(1)}`)
         .addTo(map);
     });
     map.on('mouseleave', PTS_ID, () => popup.remove());
   }
-
-  // --- Live WebSocket stream ---
 
   function connectWS() {
     try {
@@ -348,24 +306,23 @@
             const st = (d.speed || 0) > 2 ? 'moving' : 'idle';
             markerFor(d.device_id, d.lat, d.lng, st, d.device_id);
           }
-        } catch {
-          // ignore
+        } catch (err) {
+          console.error(err);
         }
       };
       ws.onclose = () => setStatus('Live stream disconnected');
-    } catch {
+    } catch (err) {
+      console.error(err);
       setStatus('WS error');
     }
   }
 
-  // --- UI overlay ---
-
-  function showOverlay(show = true) {
+  function showOverlay(show=true) {
+    if (!overlay) return;
     overlay.classList.toggle('hidden', !show);
   }
 
-  // --- Boot ---
-
+  // Boot
   window.addEventListener('DOMContentLoaded', () => {
     deviceList = el('deviceList');
     statusEl   = el('status');
@@ -378,32 +335,44 @@
 
     if (!localStorage.getItem('apiUrl')) showOverlay(true);
 
-    el('loginBtn').onclick = () => {
-      saveSettings(el('loginApiUrl').value, el('loginApiKey').value);
-      showOverlay(false);
-      loadDevices().catch(() => setStatus('Failed to load devices'));
-      connectWS();
-      startAutoRefresh();
-    };
-
-    if (el('showLabels')) {
-      el('showLabels').addEventListener('change', () => {
-        localStorage.setItem('showLabels', el('showLabels').checked ? '1' : '0');
-      });
+    const loginBtn = el('loginBtn');
+    if (loginBtn) {
+      loginBtn.onclick = () => {
+        saveSettings(el('loginApiUrl').value, el('loginApiKey').value);
+        showOverlay(false);
+        loadDevices().catch(() => setStatus('Failed to load devices'));
+        connectWS();
+        startAutoRefresh();
+      };
     }
 
-    logoutBtn.onclick = () => {
-      loadSettings();
-      showOverlay(true);
-    };
+    const showLabels = el('showLabels');
+    if (showLabels) {
+      showLabels.addEventListener('change', () => {
+        localStorage.setItem('showLabels', showLabels.checked ? '1' : '0');
+      });
+      // restore saved preference
+      const saved = localStorage.getItem('showLabels');
+      if (saved === '1') showLabels.checked = true;
+    }
 
-    historyBtn.onclick = () => {
-      const first = deviceList.querySelector('li strong');
-      if (first) showHistory(first.textContent);
-    };
+    if (logoutBtn) {
+      logoutBtn.onclick = () => {
+        loadSettings();
+        showOverlay(true);
+      };
+    }
+
+    if (historyBtn) {
+      historyBtn.onclick = () => {
+        const first = deviceList && deviceList.querySelector('li strong');
+        if (first) showHistory(first.textContent);
+      };
+    }
 
     loadDevices().catch(() => setStatus('Failed to load devices'));
     connectWS();
     startAutoRefresh();
   });
 })();
+</script>
