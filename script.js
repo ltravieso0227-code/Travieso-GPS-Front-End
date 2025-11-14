@@ -43,22 +43,25 @@
 
     // Optional satellite toggle if you have a checkbox with id="satToggle"
     const satToggle = el('satToggle');
-    if (satToggle) {
-      satToggle.addEventListener('change', () => {
-        const isSat = satToggle.checked;
-        const styleUrl = isSat
-          ? 'https://api.maptiler.com/maps/hybrid/style.json?key=GET_YOUR_KEY'
-          : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
-        const c = map.getCenter();
-        const z = map.getZoom();
-        map.setStyle(styleUrl);
-        map.once('styledata', () => {
-          map.setCenter(c);
-          map.setZoom(z);
-        });
-      });
-    }
-  }
+if (satToggle) {
+  satToggle.addEventListener('change', () => {
+    const isSat = satToggle.checked;
+    const styleUrl = isSat
+      ? 'https://api.maptiler.com/maps/hybrid/style.json?key=fWfNo8f8kAGF4RDFwHmy'
+      : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+
+    const c = map.getCenter();
+    const z = map.getZoom();
+
+    map.setStyle(styleUrl);
+
+    map.once('styledata', () => {
+      map.setCenter(c);
+      map.setZoom(z);
+    });
+  });
+}
+
 
   async function showDevicePopup(deviceId, lngLat) {
     try {
