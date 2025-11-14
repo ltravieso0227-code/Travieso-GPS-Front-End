@@ -2,56 +2,113 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Travieso GPS — Live Map</title>
-  <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- MapLibre CSS -->
+  <link
+    href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css"
+    rel="stylesheet"
+  />
+
+  <!-- App styles -->
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- Settings / login overlay -->
-  <div id="loginOverlay" class="overlay hidden">
-    <div class="panel">
-      <h2>Sign in to Travieso GPS</h2>
-      <label>API URL
-        <input id="loginApiUrl" type="text" placeholder="https://travieso-gps-platform.onrender.com">
-      </label>
-      <label>API Key (optional for reads)
-        <input id="loginApiKey" type="password" placeholder="demo_key_1">
-      </label>
-      <div class="row">
-        <button id="loginBtn">Save & Continue</button>
+  <div class="app-shell">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <h1>Travieso GPS — Live Map</h1>
       </div>
-      <small class="hint">We store these in your browser only (localStorage) so the app remembers you.</small>
+      <div class="header-right">
+        <button id="historyBtn" class="btn btn-ghost">Show History</button>
+
+        <label class="header-toggle">
+          <input type="checkbox" id="showLabels" />
+          <span>Labels</span>
+        </label>
+
+        <label class="header-toggle">
+          <input type="checkbox" id="satToggle" />
+          <span>Satellite</span>
+        </label>
+
+        <button
+          id="settingsBtn"
+          class="btn btn-outline"
+          onclick="document.getElementById('loginOverlay').classList.remove('hidden')"
+        >
+          Settings
+        </button>
+
+        <span id="status" class="status-pill">Disconnected</span>
+      </div>
+    </header>
+
+    <!-- Main layout -->
+    <main class="main-layout">
+      <!-- Sidebar: devices -->
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-title">Devices</div>
+          <div class="sidebar-subtitle">Auto-refresh: 10s</div>
+        </div>
+        <ul id="deviceList" class="device-list"></ul>
+      </aside>
+
+      <!-- Map panel -->
+      <section class="map-panel">
+        <div id="map"></div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer>
+      <small>© Travieso GPS</small>
+    </footer>
+  </div>
+
+  <!-- Settings / Login overlay -->
+  <div id="loginOverlay" class="overlay hidden">
+    <div class="overlay-backdrop"></div>
+    <div class="overlay-card">
+      <h2>Connect to API</h2>
+      <p class="overlay-desc">
+        Enter your Travieso GPS API URL and optional API key. These are stored
+        locally in your browser only.
+      </p>
+
+      <label class="field">
+        <span>API URL</span>
+        <input
+          id="loginApiUrl"
+          type="text"
+          placeholder="https://travieso-gps-platform.onrender.com"
+        />
+      </label>
+
+      <label class="field">
+        <span>API Key (optional)</span>
+        <input id="loginApiKey" type="text" placeholder="demo_key_1" />
+      </label>
+
+      <div class="overlay-actions">
+        <button id="logoutBtn" class="btn btn-ghost">Cancel</button>
+        <button id="loginBtn" class="btn btn-primary">Save &amp; Continue</button>
+      </div>
+
+      <p class="overlay-hint">
+        Tip: You can reopen this dialog anytime with the <strong>Settings</strong>
+        button in the top-right.
+      </p>
     </div>
   </div>
 
-  <header>
-    <h1>Travieso GPS — Live Map</h1>
-    <div class="controls">
-      <button id="historyBtn" class="ghost">Show History</button>
-      <label class="switch">
-        <input id="showLabels" type="checkbox">
-        <span>Labels</span>
-      </label>
-      <button id="logoutBtn" class="ghost">Settings</button>
-      <span class="status">Status: <b id="status">Disconnected</b></span>
-    </div>
-  </header>
-
-  <main>
-    <aside>
-      <div class="list-header">
-        <div>Devices</div>
-        <div class="mini">Auto-refresh: <span id="refreshSecs">10s</span></div>
-      </div>
-      <ul id="deviceList"></ul>
-    </aside>
-    <section id="map"></section>
-  </main>
-
-  <footer><small>© Travieso GPS</small></footer>
-
+  <!-- MapLibre JS -->
   <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+
+  <!-- App JS -->
   <script src="script.js"></script>
 </body>
 </html>
