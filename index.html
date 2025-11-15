@@ -60,6 +60,132 @@
       <!-- Map panel -->
       <section class="map-panel">
         <div id="map"></div>
+
+        <!-- Device Info Panel -->
+        <div id="deviceInfoPanel" class="info-panel hidden">
+          <button class="close-btn" onclick="hideDevicePanel()">✕</button>
+
+          <!-- Header -->
+          <div class="info-header">
+            <div class="info-title">
+              <span class="asset-icon" id="panelAssetIcon">🚚</span>
+              <div>
+                <div id="panelDeviceName" class="info-main-name">Device Name</div>
+                <div id="panelDeviceId" class="info-sub-id">ID: TEST-001</div>
+              </div>
+            </div>
+            <div class="status-badges">
+              <span id="panelStatusBadge" class="badge badge-status">Idle</span>
+              <span id="panelSubBadge" class="badge badge-sub-ok">Active</span>
+            </div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="panel-tabs">
+            <button class="tab active" data-tab="overview">Overview</button>
+            <button class="tab" data-tab="history">History</button>
+            <button class="tab" data-tab="diagnostics">Diagnostics</button>
+          </div>
+
+          <div class="panel-tab-content">
+            <!-- OVERVIEW TAB -->
+            <div id="tab-overview" class="tab-pane active">
+              <div class="row">
+                <div class="info-label">Owner</div>
+                <div id="panelOwner" class="info-value">N/A</div>
+              </div>
+
+              <div class="row">
+                <div class="info-label">Asset Type</div>
+                <div id="panelAssetType" class="info-value">Truck</div>
+              </div>
+
+              <div class="row">
+                <div class="info-label">Last Updated</div>
+                <div id="panelLastUpdated" class="info-value">–</div>
+              </div>
+
+              <div class="row">
+                <div class="info-label">Last Location</div>
+                <div id="panelLastLocation" class="info-value">–</div>
+              </div>
+
+              <div class="button-row">
+                <button class="panel-button primary" id="btnLocate">📍 Locate</button>
+                <button class="panel-button outline" id="btnHistoryFromOverview">▶ History</button>
+              </div>
+
+              <div class="button-row">
+                <button class="panel-button secondary" id="btnRecovery">🛟 Recovery Link</button>
+                <button class="panel-button secondary" id="btnEdit">✏️ Edit</button>
+              </div>
+
+              <button class="panel-button linklike" id="btnGoogleMaps">
+                🌎 Open in Google Maps
+              </button>
+            </div>
+
+            <!-- HISTORY TAB -->
+            <div id="tab-history" class="tab-pane">
+              <div class="row">
+                <div class="info-label">Playback</div>
+                <div class="info-value small">Last positions (up to 50 points)</div>
+              </div>
+
+              <div class="history-controls">
+                <button class="panel-button primary" id="btnPlayHistory">▶ Play</button>
+                <button class="panel-button outline" id="btnStopHistory">⏹ Stop</button>
+              </div>
+
+              <div id="historyList" class="history-list"></div>
+            </div>
+
+            <!-- DIAGNOSTICS TAB -->
+            <div id="tab-diagnostics" class="tab-pane">
+              <div class="diag-row">
+                <div class="diag-label">Battery</div>
+                <div class="diag-bar-wrap">
+                  <div id="batteryBar" class="diag-bar"></div>
+                </div>
+                <span id="batteryLabel" class="diag-value">–%</span>
+              </div>
+
+              <div class="diag-row">
+                <div class="diag-label">Signal</div>
+                <div class="diag-bar-wrap">
+                  <div id="signalBar" class="diag-bar"></div>
+                </div>
+                <span id="signalLabel" class="diag-value">–</span>
+              </div>
+
+              <div class="diag-row">
+                <div class="diag-label">Wi-Fi</div>
+                <div class="diag-bar-wrap">
+                  <div id="wifiBar" class="diag-bar"></div>
+                </div>
+                <span id="wifiLabel" class="diag-value">–</span>
+              </div>
+
+              <div class="diag-row diag-small">
+                <div class="diag-label">Speed</div>
+                <span id="speedLabel" class="diag-value">0 mph</span>
+              </div>
+
+              <div class="diag-row diag-small">
+                <div class="diag-label">Ignition</div>
+                <span id="ignitionLabel" class="diag-value">Unknown</span>
+              </div>
+
+              <div class="diag-row diag-small">
+                <div class="diag-label">Heading</div>
+                <span id="headingLabel" class="diag-value">
+                  <span id="headingArrow">↑</span>
+                  <span id="headingText">N/A</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
 
