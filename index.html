@@ -54,6 +54,14 @@
           <div class="sidebar-title">Devices</div>
           <div class="sidebar-subtitle">Auto-refresh: 10s</div>
         </div>
+
+        <!-- NEW: Sidebar metrics row -->
+        <div class="sidebar-metrics">
+          <span id="metricTotal" class="metric-pill">0 devices</span>
+          <span id="metricOnline" class="metric-pill metric-online">0 online</span>
+          <span id="metricMoving" class="metric-pill metric-moving">0 moving</span>
+        </div>
+
         <ul id="deviceList" class="device-list"></ul>
       </aside>
 
@@ -158,7 +166,7 @@
                 <span id="signalLabel" class="diag-value">–</span>
               </div>
 
-              <!-- Renamed from Wi-Fi to Location Source -->
+              <!-- Location source -->
               <div class="diag-row">
                 <div class="diag-label">Location Source</div>
                 <div class="diag-bar-wrap">
