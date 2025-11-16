@@ -121,44 +121,66 @@ function normalizeUrl(u) {
   return u.replace(/\/+$/, "");
 }
 
-// Subscription badge helper
-function setSubscriptionBadge(lastSeenIso) {
-  if (!els.panelSubBadge) return;
+/**
+ * Try to infer HOW the device got its location:
+ * - "gps" (satellite)
+ * - "wifi" (Wi-Fi positioning)
+ * - "cell" (cell tower)
+ * - "unknown"
+ */
+function deriveLocationSource(p) {
+  if (!p || typeof p !== "object") return "unknown";
 
-  els.panelSubBadge.classList.remove(
-    "badge-sub-ok",
-    "badge-sub-warning",
-    "badge-sub-danger",
-    "badge-sub-unknown"
-  );
+  const raw =
+    p.location_source ??
+    p.position_source ??
+    p.loc_source ??
+    p.source ??
+    p.fix_type ??
+    p.provider ??
+    null;
 
-  if (!lastSeenIso) {
-    els.panelSubBadge.textContent = "Unknown";
-    els.panelSubBadge.classList.add("badge-sub-unknown");
-    return;
+  let v = raw ? String(raw).toLowerCase() : "";
+
+  if (v.includes("gps") || v.includes("gnss") || v.includes("sat")) {
+    return "gps";
+  }
+  if (v.includes("wifi") || v.includes("wi-fi") || v.includes("wi fi")) {
+    return "wifi";
+  }
+  if (
+    v.includes("cell") ||
+    v.includes("gsm") ||
+    v.includes("lte") ||
+    v.includes("network")
+  ) {
+    return "cell";
   }
 
-  let days;
-  try {
-    const last = new Date(lastSeenIso).getTime();
-    const now = Date.now();
-    days = (now - last) / (1000 * 60 * 60 * 24);
-  } catch {
-    els.panelSubBadge.textContent = "Unknown";
-    els.panelSubBadge.classList.add("badge-sub-unknown");
-    return;
+  // Heuristics from fields
+  if (
+    p.wifi_ssid ||
+    p.wifi_bssid ||
+    (typeof p.wifi_count === "number" && p.wifi_count > 0)
+  ) {
+    return "wifi";
   }
 
-  if (days <= 7) {
-    els.panelSubBadge.textContent = "Active";
-    els.panelSubBadge.classList.add("badge-sub-ok");
-  } else if (days <= 30) {
-    els.panelSubBadge.textContent = "At Risk";
-    els.panelSubBadge.classList.add("badge-sub-warning");
-  } else {
-    els.panelSubBadge.textContent = "Expired";
-    els.panelSubBadge.classList.add("badge-sub-danger");
+  if (
+    p.cell_id ||
+    p.ci ||
+    p.enb_id ||
+    (typeof p.mcc === "number" && typeof p.mnc === "number")
+  ) {
+    return "cell";
   }
+
+  // If satellites count exists, favor GPS
+  if (typeof p.satellites === "number" && p.satellites > 0) {
+    return "gps";
+  }
+
+  return "unknown";
 }
 
 // ---------- Map ----------
@@ -569,6 +591,11 @@ async function handleDeviceClick(deviceId) {
     els.panelStatusBadge.style.borderColor = color;
   }
 
+  // Subscription badge – placeholder, always "Active"
+  if (els.panelSubBadge) {
+    els.panelSubBadge.textContent = "Active";
+  }
+
   // Fetch detail + history
   const [detail, positions] = await Promise.all([
     fetchDeviceDetail(deviceId),
@@ -601,23 +628,12 @@ async function handleDeviceClick(deviceId) {
         els.batteryLabel.textContent = pct + "%";
       }
     }
-
-    // Subscription badge based on freshest last_seen we know
-    const subLast =
-      detail.last_seen ||
-      detail.last_seen_at ||
-      meta.last_seen ||
-      null;
-    setSubscriptionBadge(subLast);
   } else {
     if (els.panelAssetType) els.panelAssetType.textContent = "N/A";
     if (els.panelLastUpdated) els.panelLastUpdated.textContent = "–";
     if (els.panelOwner) els.panelOwner.textContent = "N/A";
     if (els.batteryBar) els.batteryBar.style.width = "0%";
     if (els.batteryLabel) els.batteryLabel.textContent = "–%";
-
-    // Fallback subscription state based only on meta
-    setSubscriptionBadge(meta.last_seen || null);
   }
 
   // History tab + last location + speed / heading
@@ -631,6 +647,7 @@ async function handleDeviceClick(deviceId) {
       const spd = newest.speed != null ? Number(newest.speed).toFixed(1) : "0.0";
       els.speedLabel.textContent = `${spd} mph`;
     }
+
     // Heading (simple arrow + degrees)
     if (els.headingArrow && els.headingText) {
       const heading = newest.heading ?? null;
@@ -647,9 +664,44 @@ async function handleDeviceClick(deviceId) {
         els.headingText.textContent = `${hNum.toFixed(0)}°`;
       }
     }
+
     // Ignition – placeholder until you wire a real field
     if (els.ignitionLabel) {
       els.ignitionLabel.textContent = "Unknown";
+    }
+
+    // Location method (GPS / Wi-Fi / Cell) using the "Wi-Fi" row
+    if (els.wifiLabel && els.wifiBar) {
+      const kind = deriveLocationSource(newest); // "gps" | "wifi" | "cell" | "unknown"
+      let label = "Location method unknown";
+      let pct = 0;
+
+      if (kind === "gps") {
+        label = "📡 GPS (Satellite)";
+        pct = 100;
+      } else if (kind === "wifi") {
+        label = "🛜 Wi-Fi Positioning";
+        pct = 70;
+      } else if (kind === "cell") {
+        label = "📶 Cell Tower";
+        pct = 40;
+      }
+
+      els.wifiLabel.textContent = label;
+      els.wifiBar.style.width = pct + "%";
+    }
+
+  } else {
+    // No newest position – reset some diagnostics
+    if (els.speedLabel) els.speedLabel.textContent = "0 mph";
+    if (els.headingArrow && els.headingText) {
+      els.headingArrow.textContent = "↑";
+      els.headingText.textContent = "N/A";
+    }
+    if (els.ignitionLabel) els.ignitionLabel.textContent = "Unknown";
+    if (els.wifiLabel && els.wifiBar) {
+      els.wifiLabel.textContent = "Location method unknown";
+      els.wifiBar.style.width = "0%";
     }
   }
 
