@@ -11,15 +11,7 @@ const state = {
   devices: [],
   markers: {},          // deviceId -> maplibre marker
   selectedId: null,
-  historyCache: {},     // deviceId -> positions[]
-};
-
-// Simple playback state so we can start/stop cleanly
-let playbackTimer = null;
-let playbackState = {
-  deviceId: null,
-  seq: [],
-  index: 0,
+  historyCache: {}      // deviceId -> positions[]
 };
 
 // ---------- DOM references ----------
@@ -81,7 +73,7 @@ const els = {
   loginApiUrl: document.getElementById("loginApiUrl"),
   loginApiKey: document.getElementById("loginApiKey"),
   loginBtn: document.getElementById("loginBtn"),
-  logoutBtn: document.getElementById("logoutBtn"),
+  logoutBtn: document.getElementById("logoutBtn")
 };
 
 // ---------- Helpers ----------
@@ -120,15 +112,65 @@ function normalizeUrl(u) {
 }
 
 // ---------- Map ----------
+let currentBaseStyle = "streets"; // "streets" | "satellite"
+
+function getStyleUrl(kind) {
+  if (kind === "satellite") {
+    // MapTiler satellite (with labels)
+    return `https://api.maptiler.com/maps/satellite/style.json?key=${MAPTILER_KEY}`;
+  }
+  // Default streets
+  return `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`;
+}
+
 function initMap() {
   map = new maplibregl.Map({
     container: "map",
-    style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
+    style: getStyleUrl("streets"),
     center: [-80.19, 25.76], // Miami-ish
-    zoom: 10,
+    zoom: 10
   });
 
   map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+  // When map style is ready, sync label visibility with the checkbox
+  map.on("styledata", () => {
+    const show = els.showLabels ? els.showLabels.checked : true;
+    applyLabelVisibility(show);
+  });
+}
+
+function applyLabelVisibility(show) {
+  if (!map || !map.getStyle) return;
+  const style = map.getStyle();
+  if (!style || !style.layers) return;
+
+  style.layers.forEach((layer) => {
+    // Hide/show all symbol layers (labels & POI icons)
+    if (layer.type === "symbol") {
+      try {
+        map.setLayoutProperty(
+          layer.id,
+          "visibility",
+          show ? "visible" : "none"
+        );
+      } catch (e) {
+        // ignore layers that can't be changed
+      }
+    }
+  });
+}
+
+function setMapBaseStyle(isSatellite) {
+  if (!map) return;
+  const kind = isSatellite ? "satellite" : "streets";
+  if (kind === currentBaseStyle) return;
+
+  currentBaseStyle = kind;
+  const styleUrl = getStyleUrl(kind);
+  map.setStyle(styleUrl);
+
+  // label visibility is reapplied automatically in "styledata" listener
 }
 
 function upsertMarker(deviceId, lat, lng, status = "idle") {
@@ -139,12 +181,12 @@ function upsertMarker(deviceId, lat, lng, status = "idle") {
     status === "idle"   ? "#fbbf24" :
                           "#6b7280";
 
-  let marker = state.markers[deviceId];
-
-  if (marker) {
-    marker.setLngLat([lng, lat]);
+  if (state.markers[deviceId]) {
+    state.markers[deviceId].setLngLat([lng, lat]);
   } else {
-    marker = new maplibregl.Marker({ color }).setLngLat([lng, lat]).addTo(map);
+    const marker = new maplibregl.Marker({ color })
+      .setLngLat([lng, lat])
+      .addTo(map);
     state.markers[deviceId] = marker;
   }
 }
@@ -156,7 +198,7 @@ function focusOnDevice(deviceId) {
     map.easeTo({
       center: [p.lng, p.lat],
       zoom: 15,
-      duration: 600,
+      duration: 600
     });
   }
 }
@@ -178,13 +220,12 @@ async function fetchDevices() {
     renderDeviceList();
     setStatus("Connected", true);
 
-    // For map markers we only need the latest point, but:
-    // IMPORTANT: do NOT overwrite historyCache here,
-    // so we don't destroy the multi-point history used for playback.
+    // Also refresh markers with latest positions (1 per device)
     for (const d of state.devices) {
       const positions = await fetchDevicePositions(d.id, 1);
       if (positions && positions.length) {
         const p = positions[0];
+        state.historyCache[d.id] = positions;
         upsertMarker(d.id, p.lat, p.lng, d.status);
       }
     }
@@ -215,8 +256,9 @@ async function fetchDevicePositions(deviceId, limit = 50) {
       { headers: buildHeaders() }
     );
     if (!res.ok) return [];
+    const data = await res.json();
     // backend returns newest first
-    return await res.json();
+    return data;
   } catch (e) {
     console.error("positions error", e);
     return [];
@@ -230,7 +272,7 @@ async function createRecoveryLink(deviceId) {
     recovery_agent_email: null,
     recovery_agent_phone: null,
     expires_at: expiresAt,
-    notes: null,
+    notes: null
   };
 
   try {
@@ -240,9 +282,9 @@ async function createRecoveryLink(deviceId) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...buildHeaders(),
+          ...buildHeaders()
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(body)
       }
     );
     if (!res.ok) {
@@ -320,7 +362,6 @@ function hideDevicePanel() {
   els.panel.style.display = "none";
   els.panel.classList.add("hidden");
   state.selectedId = null;
-  stopPlayback();
 }
 window.hideDevicePanel = hideDevicePanel; // used by onclick in HTML
 
@@ -344,11 +385,10 @@ async function handleDeviceClick(deviceId) {
   state.selectedId = deviceId;
   showDevicePanel();
   setActiveTab("overview");
-  stopPlayback(); // reset any prior playback
 
   const meta = state.devices.find((d) => d.id === deviceId) || {};
 
-  // Header fields
+  // Quick header fields
   if (els.panelDeviceName) {
     els.panelDeviceName.textContent = meta.name || deviceId;
   }
@@ -366,7 +406,7 @@ async function handleDeviceClick(deviceId) {
     els.panelStatusBadge.style.borderColor = color;
   }
 
-  // Subscription badge – placeholder
+  // Subscription badge – placeholder, always "Active"
   if (els.panelSubBadge) {
     els.panelSubBadge.textContent = "Active";
   }
@@ -374,10 +414,9 @@ async function handleDeviceClick(deviceId) {
   // Fetch detail + history
   const [detail, positions] = await Promise.all([
     fetchDeviceDetail(deviceId),
-    fetchDevicePositions(deviceId, 50),
+    fetchDevicePositions(deviceId, 50)
   ]);
 
-  // Store the full history ONLY here, not in fetchDevices()
   state.historyCache[deviceId] = positions || [];
 
   // Overview from detail
@@ -389,6 +428,7 @@ async function handleDeviceClick(deviceId) {
       els.panelLastUpdated.textContent = fmtTime(detail.last_seen);
     }
     if (els.panelOwner) {
+      // Right now we don't have "owner" separate, so reusing description
       els.panelOwner.textContent = detail.description || "N/A";
     }
     // Battery for diagnostics
@@ -422,7 +462,7 @@ async function handleDeviceClick(deviceId) {
       const spd = newest.speed != null ? Number(newest.speed).toFixed(1) : "0.0";
       els.speedLabel.textContent = `${spd} mph`;
     }
-    // Heading
+    // Heading (simple arrow + degrees)
     if (els.headingArrow && els.headingText) {
       const heading = newest.heading ?? null;
       if (heading == null) {
@@ -438,8 +478,9 @@ async function handleDeviceClick(deviceId) {
         els.headingText.textContent = `${hNum.toFixed(0)}°`;
       }
     }
+    // Ignition – placeholder until you wire a real field
     if (els.ignitionLabel) {
-      els.ignitionLabel.textContent = "Unknown"; // placeholder
+      els.ignitionLabel.textContent = "Unknown";
     }
   }
 
@@ -494,73 +535,6 @@ function renderHistory(deviceId) {
   upsertMarker(deviceId, newest.lat, newest.lng, findDeviceStatus(deviceId));
 }
 
-// ---------- Playback ----------
-function stopPlayback() {
-  if (playbackTimer) {
-    clearInterval(playbackTimer);
-    playbackTimer = null;
-  }
-  playbackState = { deviceId: null, seq: [], index: 0 };
-}
-
-function playHistory(deviceId) {
-  const positions = state.historyCache[deviceId] || [];
-  const seq = positions.slice().reverse(); // oldest -> newest (for animation)
-
-  if (seq.length < 2) {
-    alert("Not enough points for playback (need at least 2).");
-    return;
-  }
-
-  stopPlayback(); // reset anything previous
-
-  playbackState = {
-    deviceId,
-    seq,
-    index: 0,
-  };
-
-  // Start at the first (oldest) point
-  const first = seq[0];
-  upsertMarker(deviceId, first.lat, first.lng, findDeviceStatus(deviceId));
-  if (map) {
-    map.easeTo({
-      center: [first.lng, first.lat],
-      zoom: 15,
-      duration: 400,
-    });
-  }
-
-  playbackTimer = setInterval(() => {
-    playbackState.index += 1;
-    const i = playbackState.index;
-    if (i >= playbackState.seq.length) {
-      stopPlayback();
-      return;
-    }
-    const p = playbackState.seq[i];
-
-    // Move marker
-    upsertMarker(deviceId, p.lat, p.lng, findDeviceStatus(deviceId));
-
-    // Keep labels in sync
-    if (els.speedLabel) {
-      const spd = p.speed != null ? Number(p.speed).toFixed(1) : "0.0";
-      els.speedLabel.textContent = `${spd} mph`;
-    }
-    if (els.panelLastLocation) {
-      els.panelLastLocation.textContent = fmtLatLng(p.lat, p.lng);
-    }
-
-    if (map) {
-      map.easeTo({
-        center: [p.lng, p.lat],
-        duration: 500,
-      });
-    }
-  }, 1000);
-}
-
 // ---------- Button wiring ----------
 function wirePanelButtons() {
   // Locate
@@ -604,10 +578,6 @@ function wirePanelButtons() {
   // Google Maps
   if (els.btnGoogleMaps) {
     els.btnGoogleMaps.addEventListener("click", () => {
-      if (!state.selectedId) {
-        alert("Select a device first.");
-        return;
-      }
       const positions = state.historyCache[state.selectedId] || [];
       if (!positions.length) {
         alert("No position available for Google Maps.");
@@ -619,21 +589,16 @@ function wirePanelButtons() {
     });
   }
 
-  // History buttons
+  // History buttons (simple stubs for now)
   if (els.btnPlayHistory) {
     els.btnPlayHistory.addEventListener("click", () => {
-      if (!state.selectedId) {
-        alert("Select a device first.");
-        return;
-      }
-      playHistory(state.selectedId);
+      alert("Playback animation placeholder — we can wire this up later.");
     });
   }
 
   if (els.btnStopHistory) {
     els.btnStopHistory.addEventListener("click", () => {
-      stopPlayback();
-      alert("Playback stopped.");
+      alert("Playback stopped (placeholder).");
     });
   }
 
@@ -657,17 +622,18 @@ function wirePanelButtons() {
     });
   });
 
-  // Map controls toggles (still stubs for now)
+  // Map controls toggles
   if (els.showLabels) {
     els.showLabels.addEventListener("change", () => {
-      console.log("Labels toggle:", els.showLabels.checked);
-      // Later we can toggle label layers here.
+      const show = els.showLabels.checked;
+      applyLabelVisibility(show);
     });
   }
+
   if (els.satToggle) {
     els.satToggle.addEventListener("change", () => {
-      console.log("Satellite toggle:", els.satToggle.checked);
-      // Later we can swap style here.
+      const isSat = els.satToggle.checked;
+      setMapBaseStyle(isSat);
     });
   }
 }
