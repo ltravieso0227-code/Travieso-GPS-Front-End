@@ -3,15 +3,24 @@
 
 const MAPTILER_KEY = "fWfNo8f8kAGF4RDFwHmy";
 
+// MapTiler styles
+const STYLE_STREETS = `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`;
+const STYLE_SAT = `https://api.maptiler.com/maps/hybrid/style.json?key=${MAPTILER_KEY}`;
+
 let map = null;
 let apiUrl = "";
 let apiKey = "";
+
+// will hold ids of label layers (symbol layers) for current style
+let labelLayerIds = [];
 
 const state = {
   devices: [],
   markers: {},          // deviceId -> maplibre marker
   selectedId: null,
-  historyCache: {}      // deviceId -> positions[]
+  historyCache: {},     // deviceId -> positions[]
+  labelsOn: true,
+  styleMode: "streets"  // "streets" | "sat"
 };
 
 // Simple playback controller for History tab
@@ -128,16 +137,57 @@ function pickAssetIcon(detail, meta) {
   return "📦";
 }
 
-// ---------- Map ----------
+// ---------- Map & style / label toggles ----------
 function initMap() {
   map = new maplibregl.Map({
     container: "map",
-    style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
+    style: STYLE_STREETS,
     center: [-80.19, 25.76], // Miami-ish
     zoom: 10
   });
 
   map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+  // Whenever style changes or loads, recompute label layers and apply visibility
+  map.on("styledata", () => {
+    refreshLabelLayers();
+    applyLabelsVisibility();
+  });
+}
+
+// gather IDs of all symbol layers so we can hide/show labels
+function refreshLabelLayers() {
+  if (!map) return;
+  const style = map.getStyle();
+  if (!style || !style.layers) return;
+
+  labelLayerIds = [];
+  for (const layer of style.layers) {
+    if (layer.type === "symbol") {
+      labelLayerIds.push(layer.id);
+    }
+  }
+}
+
+// actually turn labels on/off for current style
+function applyLabelsVisibility() {
+  if (!map) return;
+  const visible = state.labelsOn ? "visible" : "none";
+
+  labelLayerIds.forEach((id) => {
+    try {
+      map.setLayoutProperty(id, "visibility", visible);
+    } catch (e) {
+      // ignore if layer doesn't exist in this style
+    }
+  });
+}
+
+function switchStyle(mode) {
+  if (!map) return;
+  state.styleMode = mode;
+  const styleUrl = mode === "sat" ? STYLE_SAT : STYLE_STREETS;
+  map.setStyle(styleUrl);
 }
 
 function upsertMarker(deviceId, lat, lng, status = "idle") {
@@ -348,7 +398,7 @@ function setActiveTab(tabName) {
   if (pane) pane.classList.add("active");
 }
 
-// Subscription badge helper (tries to be smart, but safe)
+// Subscription badge helper
 function updateSubscriptionBadge(detail, meta) {
   if (!els.panelSubBadge) return;
 
@@ -357,7 +407,6 @@ function updateSubscriptionBadge(detail, meta) {
     meta?.subscription_status ||
     "active";
 
-  // Optional: look at expires_at if present
   if (detail?.subscription_expires_at) {
     const exp = new Date(detail.subscription_expires_at);
     const diffDays = (exp - new Date()) / (1000 * 60 * 60 * 24);
@@ -424,7 +473,6 @@ function renderHistory(deviceId) {
     els.historyList.appendChild(row);
   });
 
-  // Update marker for newest coord
   upsertMarker(deviceId, newest.lat, newest.lng, findDeviceStatus(deviceId));
 }
 
@@ -450,8 +498,7 @@ async function startHistoryPlayback(deviceId) {
   stopHistoryPlayback();
   historyPlayback.deviceId = deviceId;
 
-  // Play from oldest to newest
-  const path = positions.slice().reverse();
+  const path = positions.slice().reverse(); // oldest -> newest
   let idx = 0;
 
   historyPlayback.timer = setInterval(() => {
@@ -497,10 +544,9 @@ async function handleDeviceClick(deviceId) {
     els.panelStatusBadge.style.borderColor = color;
   }
 
-  // Default subscription badge state (will be refined by detail)
+  // Default subscription badge
   updateSubscriptionBadge(null, meta);
 
-  // Fetch detail + history
   const [detail, positions] = await Promise.all([
     fetchDeviceDetail(deviceId),
     fetchDevicePositions(deviceId, 50)
@@ -508,7 +554,6 @@ async function handleDeviceClick(deviceId) {
 
   state.historyCache[deviceId] = positions || [];
 
-  // Overview from detail
   if (detail) {
     if (els.panelAssetType) {
       els.panelAssetType.textContent = detail.asset_type || "N/A";
@@ -517,19 +562,15 @@ async function handleDeviceClick(deviceId) {
       els.panelLastUpdated.textContent = fmtTime(detail.last_seen);
     }
     if (els.panelOwner) {
-      // For now: reuse description as "owner" label
       els.panelOwner.textContent = detail.description || "N/A";
     }
 
-    // Asset icon
     if (els.panelAssetIcon) {
       els.panelAssetIcon.textContent = pickAssetIcon(detail, meta);
     }
 
-    // Subscription badge, using detail data
     updateSubscriptionBadge(detail, meta);
 
-    // Battery for diagnostics
     if (els.batteryBar && els.batteryLabel) {
       const b = detail.battery ?? null;
       if (b == null) {
@@ -550,18 +591,14 @@ async function handleDeviceClick(deviceId) {
     if (els.batteryLabel) els.batteryLabel.textContent = "–%";
   }
 
-  // History tab + last location + speed / heading
   renderHistory(deviceId);
 
-  // Diagnostics extras from newest position if present
   const newest = (state.historyCache[deviceId] || [])[0];
   if (newest) {
-    // Speed
     if (els.speedLabel) {
       const spd = newest.speed != null ? Number(newest.speed).toFixed(1) : "0.0";
       els.speedLabel.textContent = `${spd} mph`;
     }
-    // Heading (simple arrow + degrees)
     if (els.headingArrow && els.headingText) {
       const heading = newest.heading ?? null;
       if (heading == null) {
@@ -577,13 +614,11 @@ async function handleDeviceClick(deviceId) {
         els.headingText.textContent = `${hNum.toFixed(0)}°`;
       }
     }
-    // Ignition – placeholder until you wire a real field
     if (els.ignitionLabel) {
       els.ignitionLabel.textContent = "Unknown";
     }
   }
 
-  // Focus map on this device
   focusOnDevice(deviceId);
 }
 
@@ -595,7 +630,6 @@ function wirePanelButtons() {
       if (!state.selectedId) return;
       focusOnDevice(state.selectedId);
 
-      // Fun little "ping" on the marker
       const marker = state.markers[state.selectedId];
       if (marker && marker.getElement) {
         const el = marker.getElement();
@@ -686,15 +720,20 @@ function wirePanelButtons() {
     });
   });
 
-  // Map controls toggles (stubs so they don't error)
+  // Map controls toggles
   if (els.showLabels) {
+    els.showLabels.checked = true;
     els.showLabels.addEventListener("change", () => {
-      console.log("Labels toggle:", els.showLabels.checked);
+      state.labelsOn = !!els.showLabels.checked;
+      applyLabelsVisibility();
     });
   }
+
   if (els.satToggle) {
+    els.satToggle.checked = false;
     els.satToggle.addEventListener("change", () => {
-      console.log("Satellite toggle:", els.satToggle.checked);
+      const mode = els.satToggle.checked ? "sat" : "streets";
+      switchStyle(mode);
     });
   }
 }
@@ -730,7 +769,6 @@ function initSettings() {
     });
   }
 
-  // Open overlay automatically if API URL missing
   if (!apiUrl && els.loginOverlay) {
     els.loginOverlay.classList.remove("hidden");
   }
@@ -742,11 +780,8 @@ function boot() {
   initMap();
   wirePanelButtons();
 
-  // Initial load
   fetchDevices();
-
-  // Poll every 10 seconds (matches "Auto-refresh: 10s" label)
-  setInterval(fetchDevices, 10000);
+  setInterval(fetchDevices, 10000); // 10s auto-refresh
 }
 
 // Run immediately (script is at end of <body>, DOM is ready)
