@@ -14,6 +14,12 @@ const state = {
   historyCache: {}      // deviceId -> positions[]
 };
 
+// Simple playback controller for History tab
+const historyPlayback = {
+  timer: null,
+  deviceId: null
+};
+
 // ---------- DOM references ----------
 const els = {
   // Header / global
@@ -47,11 +53,11 @@ const els = {
 
   // Tabs
   tabButtons: document.querySelectorAll(".panel-tabs .tab"),
+
+  // History tab
   tabOverview: document.getElementById("tab-overview"),
   tabHistory: document.getElementById("tab-history"),
   tabDiagnostics: document.getElementById("tab-diagnostics"),
-
-  // History tab
   btnPlayHistory: document.getElementById("btnPlayHistory"),
   btnStopHistory: document.getElementById("btnStopHistory"),
   historyList: document.getElementById("historyList"),
@@ -109,6 +115,17 @@ function fmtLatLng(lat, lng) {
 function normalizeUrl(u) {
   if (!u) return "";
   return u.replace(/\/+$/, "");
+}
+
+// Choose a cute emoji based on asset type / name
+function pickAssetIcon(detail, meta) {
+  const source = (detail?.asset_type || meta?.asset_type || meta?.name || "").toLowerCase();
+  if (source.includes("truck") || source.includes("food")) return "🚚";
+  if (source.includes("van")) return "🚐";
+  if (source.includes("car")) return "🚗";
+  if (source.includes("trailer")) return "🚛";
+  if (source.includes("boat")) return "🛥️";
+  return "📦";
 }
 
 // ---------- Map ----------
@@ -303,8 +320,6 @@ function renderDeviceList() {
 // ---------- Panel logic ----------
 function showDevicePanel() {
   if (!els.panel) return;
-
-  // Works regardless of CSS class name
   els.panel.style.display = "flex";
   els.panel.classList.remove("hidden");
 }
@@ -333,113 +348,39 @@ function setActiveTab(tabName) {
   if (pane) pane.classList.add("active");
 }
 
-async function handleDeviceClick(deviceId) {
-  state.selectedId = deviceId;
-  showDevicePanel();
-  setActiveTab("overview");
+// Subscription badge helper (tries to be smart, but safe)
+function updateSubscriptionBadge(detail, meta) {
+  if (!els.panelSubBadge) return;
 
-  const meta = state.devices.find((d) => d.id === deviceId) || {};
+  let status =
+    detail?.subscription_status ||
+    meta?.subscription_status ||
+    "active";
 
-  // Quick header fields
-  if (els.panelDeviceName) {
-    els.panelDeviceName.textContent = meta.name || deviceId;
-  }
-  if (els.panelDeviceId) {
-    els.panelDeviceId.textContent = `ID: ${deviceId}`;
-  }
-  if (els.panelStatusBadge) {
-    const status = meta.status || "offline";
-    els.panelStatusBadge.textContent =
-      status.charAt(0).toUpperCase() + status.slice(1);
-    let color = "#fca5a5";
-    if (status === "moving") color = "#22c55e";
-    else if (status === "idle") color = "#facc15";
-    els.panelStatusBadge.style.color = color;
-    els.panelStatusBadge.style.borderColor = color;
+  // Optional: look at expires_at if present
+  if (detail?.subscription_expires_at) {
+    const exp = new Date(detail.subscription_expires_at);
+    const diffDays = (exp - new Date()) / (1000 * 60 * 60 * 24);
+    if (diffDays < 0) status = "expired";
+    else if (diffDays < 7 && status === "active") status = "expiring_soon";
   }
 
-  // Subscription badge – placeholder, always "Active"
-  if (els.panelSubBadge) {
-    els.panelSubBadge.textContent = "Active";
-  }
+  const badge = els.panelSubBadge;
+  badge.classList.remove("badge-sub-ok", "badge-sub-warning", "badge-sub-expired");
 
-  // Fetch detail + history
-  const [detail, positions] = await Promise.all([
-    fetchDeviceDetail(deviceId),
-    fetchDevicePositions(deviceId, 50)
-  ]);
-
-  state.historyCache[deviceId] = positions || [];
-
-  // Overview from detail
-  if (detail) {
-    if (els.panelAssetType) {
-      els.panelAssetType.textContent = detail.asset_type || "N/A";
-    }
-    if (els.panelLastUpdated) {
-      els.panelLastUpdated.textContent = fmtTime(detail.last_seen);
-    }
-    if (els.panelOwner) {
-      // Right now we don't have "owner" separate, so reusing description
-      els.panelOwner.textContent = detail.description || "N/A";
-    }
-    // Battery for diagnostics
-    if (els.batteryBar && els.batteryLabel) {
-      const b = detail.battery ?? null;
-      if (b == null) {
-        els.batteryBar.style.width = "0%";
-        els.batteryLabel.textContent = "–%";
-      } else {
-        const pct = Math.max(0, Math.min(100, Number(b)));
-        els.batteryBar.style.width = pct + "%";
-        els.batteryLabel.textContent = pct + "%";
-      }
-    }
+  if (status === "expired") {
+    badge.textContent = "EXPIRED";
+    badge.classList.add("badge-sub-expired");
+  } else if (status === "expiring_soon") {
+    badge.textContent = "RENEW SOON";
+    badge.classList.add("badge-sub-warning");
   } else {
-    if (els.panelAssetType) els.panelAssetType.textContent = "N/A";
-    if (els.panelLastUpdated) els.panelLastUpdated.textContent = "–";
-    if (els.panelOwner) els.panelOwner.textContent = "N/A";
-    if (els.batteryBar) els.batteryBar.style.width = "0%";
-    if (els.batteryLabel) els.batteryLabel.textContent = "–%";
+    badge.textContent = "ACTIVE";
+    badge.classList.add("badge-sub-ok");
   }
-
-  // History tab + last location + speed / heading
-  renderHistory(deviceId);
-
-  // Diagnostics extras from newest position if present
-  const newest = (state.historyCache[deviceId] || [])[0];
-  if (newest) {
-    // Speed
-    if (els.speedLabel) {
-      const spd = newest.speed != null ? Number(newest.speed).toFixed(1) : "0.0";
-      els.speedLabel.textContent = `${spd} mph`;
-    }
-    // Heading (simple arrow + degrees)
-    if (els.headingArrow && els.headingText) {
-      const heading = newest.heading ?? null;
-      if (heading == null) {
-        els.headingArrow.textContent = "↑";
-        els.headingText.textContent = "N/A";
-      } else {
-        const hNum = Number(heading);
-        let arrow = "↑";
-        if (hNum > 45 && hNum <= 135) arrow = "→";
-        else if (hNum > 135 && hNum <= 225) arrow = "↓";
-        else if (hNum > 225 && hNum <= 315) arrow = "←";
-        els.headingArrow.textContent = arrow;
-        els.headingText.textContent = `${hNum.toFixed(0)}°`;
-      }
-    }
-    // Ignition – placeholder until you wire a real field
-    if (els.ignitionLabel) {
-      els.ignitionLabel.textContent = "Unknown";
-    }
-  }
-
-  // Focus map on this device
-  focusOnDevice(deviceId);
 }
 
+// ---------- History rendering / playback ----------
 function renderHistory(deviceId) {
   const positions = state.historyCache[deviceId] || [];
   if (!els.historyList) return;
@@ -487,6 +428,165 @@ function renderHistory(deviceId) {
   upsertMarker(deviceId, newest.lat, newest.lng, findDeviceStatus(deviceId));
 }
 
+function stopHistoryPlayback() {
+  if (historyPlayback.timer) {
+    clearInterval(historyPlayback.timer);
+    historyPlayback.timer = null;
+  }
+  historyPlayback.deviceId = null;
+}
+
+async function startHistoryPlayback(deviceId) {
+  const cached = state.historyCache[deviceId];
+  const positions =
+    (cached && cached.length ? cached : await fetchDevicePositions(deviceId, 50)) || [];
+
+  if (!positions.length) {
+    alert("No history to play.");
+    return;
+  }
+  state.historyCache[deviceId] = positions;
+
+  stopHistoryPlayback();
+  historyPlayback.deviceId = deviceId;
+
+  // Play from oldest to newest
+  const path = positions.slice().reverse();
+  let idx = 0;
+
+  historyPlayback.timer = setInterval(() => {
+    if (idx >= path.length) {
+      stopHistoryPlayback();
+      return;
+    }
+    const p = path[idx++];
+    upsertMarker(deviceId, p.lat, p.lng, findDeviceStatus(deviceId));
+    if (map) {
+      map.easeTo({
+        center: [p.lng, p.lat],
+        zoom: 15,
+        duration: 350
+      });
+    }
+  }, 500);
+}
+
+// ---------- Device click handler ----------
+async function handleDeviceClick(deviceId) {
+  state.selectedId = deviceId;
+  showDevicePanel();
+  setActiveTab("overview");
+
+  const meta = state.devices.find((d) => d.id === deviceId) || {};
+
+  // Quick header fields (before async)
+  if (els.panelDeviceName) {
+    els.panelDeviceName.textContent = meta.name || deviceId;
+  }
+  if (els.panelDeviceId) {
+    els.panelDeviceId.textContent = `ID: ${deviceId}`;
+  }
+  if (els.panelStatusBadge) {
+    const status = meta.status || "offline";
+    els.panelStatusBadge.textContent =
+      status.charAt(0).toUpperCase() + status.slice(1);
+    let color = "#fca5a5";
+    if (status === "moving") color = "#22c55e";
+    else if (status === "idle") color = "#facc15";
+    els.panelStatusBadge.style.color = color;
+    els.panelStatusBadge.style.borderColor = color;
+  }
+
+  // Default subscription badge state (will be refined by detail)
+  updateSubscriptionBadge(null, meta);
+
+  // Fetch detail + history
+  const [detail, positions] = await Promise.all([
+    fetchDeviceDetail(deviceId),
+    fetchDevicePositions(deviceId, 50)
+  ]);
+
+  state.historyCache[deviceId] = positions || [];
+
+  // Overview from detail
+  if (detail) {
+    if (els.panelAssetType) {
+      els.panelAssetType.textContent = detail.asset_type || "N/A";
+    }
+    if (els.panelLastUpdated) {
+      els.panelLastUpdated.textContent = fmtTime(detail.last_seen);
+    }
+    if (els.panelOwner) {
+      // For now: reuse description as "owner" label
+      els.panelOwner.textContent = detail.description || "N/A";
+    }
+
+    // Asset icon
+    if (els.panelAssetIcon) {
+      els.panelAssetIcon.textContent = pickAssetIcon(detail, meta);
+    }
+
+    // Subscription badge, using detail data
+    updateSubscriptionBadge(detail, meta);
+
+    // Battery for diagnostics
+    if (els.batteryBar && els.batteryLabel) {
+      const b = detail.battery ?? null;
+      if (b == null) {
+        els.batteryBar.style.width = "0%";
+        els.batteryLabel.textContent = "–%";
+      } else {
+        const pct = Math.max(0, Math.min(100, Number(b)));
+        els.batteryBar.style.width = pct + "%";
+        els.batteryLabel.textContent = pct + "%";
+      }
+    }
+  } else {
+    if (els.panelAssetType) els.panelAssetType.textContent = "N/A";
+    if (els.panelLastUpdated) els.panelLastUpdated.textContent = "–";
+    if (els.panelOwner) els.panelOwner.textContent = "N/A";
+    if (els.panelAssetIcon) els.panelAssetIcon.textContent = "📦";
+    if (els.batteryBar) els.batteryBar.style.width = "0%";
+    if (els.batteryLabel) els.batteryLabel.textContent = "–%";
+  }
+
+  // History tab + last location + speed / heading
+  renderHistory(deviceId);
+
+  // Diagnostics extras from newest position if present
+  const newest = (state.historyCache[deviceId] || [])[0];
+  if (newest) {
+    // Speed
+    if (els.speedLabel) {
+      const spd = newest.speed != null ? Number(newest.speed).toFixed(1) : "0.0";
+      els.speedLabel.textContent = `${spd} mph`;
+    }
+    // Heading (simple arrow + degrees)
+    if (els.headingArrow && els.headingText) {
+      const heading = newest.heading ?? null;
+      if (heading == null) {
+        els.headingArrow.textContent = "↑";
+        els.headingText.textContent = "N/A";
+      } else {
+        const hNum = Number(heading);
+        let arrow = "↑";
+        if (hNum > 45 && hNum <= 135) arrow = "→";
+        else if (hNum > 135 && hNum <= 225) arrow = "↓";
+        else if (hNum > 225 && hNum <= 315) arrow = "←";
+        els.headingArrow.textContent = arrow;
+        els.headingText.textContent = `${hNum.toFixed(0)}°`;
+      }
+    }
+    // Ignition – placeholder until you wire a real field
+    if (els.ignitionLabel) {
+      els.ignitionLabel.textContent = "Unknown";
+    }
+  }
+
+  // Focus map on this device
+  focusOnDevice(deviceId);
+}
+
 // ---------- Button wiring ----------
 function wirePanelButtons() {
   // Locate
@@ -494,6 +594,14 @@ function wirePanelButtons() {
     els.btnLocate.addEventListener("click", () => {
       if (!state.selectedId) return;
       focusOnDevice(state.selectedId);
+
+      // Fun little "ping" on the marker
+      const marker = state.markers[state.selectedId];
+      if (marker && marker.getElement) {
+        const el = marker.getElement();
+        el.classList.add("marker-ping");
+        setTimeout(() => el.classList.remove("marker-ping"), 1200);
+      }
     });
   }
 
@@ -541,16 +649,20 @@ function wirePanelButtons() {
     });
   }
 
-  // History buttons (simple stubs for now)
+  // History playback
   if (els.btnPlayHistory) {
     els.btnPlayHistory.addEventListener("click", () => {
-      alert("Playback animation placeholder — we can wire this up later.");
+      if (!state.selectedId) {
+        alert("Select a device first.");
+        return;
+      }
+      startHistoryPlayback(state.selectedId);
     });
   }
 
   if (els.btnStopHistory) {
     els.btnStopHistory.addEventListener("click", () => {
-      alert("Playback stopped (placeholder).");
+      stopHistoryPlayback();
     });
   }
 
@@ -577,13 +689,11 @@ function wirePanelButtons() {
   // Map controls toggles (stubs so they don't error)
   if (els.showLabels) {
     els.showLabels.addEventListener("change", () => {
-      // You can toggle label layers here later
       console.log("Labels toggle:", els.showLabels.checked);
     });
   }
   if (els.satToggle) {
     els.satToggle.addEventListener("change", () => {
-      // You can swap to a satellite style here later
       console.log("Satellite toggle:", els.satToggle.checked);
     });
   }
