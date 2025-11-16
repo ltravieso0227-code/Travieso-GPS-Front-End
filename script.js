@@ -14,6 +14,16 @@ const state = {
   historyCache: {}      // deviceId -> positions[]
 };
 
+// Playback state
+const playback = {
+  timerId: null,
+  index: 0,
+  positions: [],
+  marker: null,
+  lineSourceId: "history-line-source",
+  lineLayerId: "history-line-layer"
+};
+
 // ---------- DOM references ----------
 const els = {
   // Header / global
@@ -220,12 +230,17 @@ async function fetchDevices() {
     renderDeviceList();
     setStatus("Connected", true);
 
-    // Also refresh markers with latest positions (1 per device)
+    // Refresh marker positions (1 per device) WITHOUT nuking full history
     for (const d of state.devices) {
       const positions = await fetchDevicePositions(d.id, 1);
       if (positions && positions.length) {
         const p = positions[0];
-        state.historyCache[d.id] = positions;
+
+        // Only set cache if we don't already have a longer history
+        if (!state.historyCache[d.id] || state.historyCache[d.id].length <= 1) {
+          state.historyCache[d.id] = positions;
+        }
+
         upsertMarker(d.id, p.lat, p.lng, d.status);
       }
     }
@@ -300,6 +315,112 @@ async function createRecoveryLink(deviceId) {
   }
 }
 
+// ---------- Playback helpers ----------
+function stopPlayback() {
+  if (playback.timerId) {
+    clearInterval(playback.timerId);
+    playback.timerId = null;
+  }
+  if (playback.marker) {
+    playback.marker.remove();
+    playback.marker = null;
+  }
+}
+
+async function startPlaybackForSelected() {
+  const deviceId = state.selectedId;
+  if (!deviceId) {
+    alert("Select a device first.");
+    return;
+  }
+
+  // Ensure we have a reasonably full history in cache
+  let positions = state.historyCache[deviceId] || [];
+  if (positions.length < 2) {
+    const fresh = await fetchDevicePositions(deviceId, 50);
+    state.historyCache[deviceId] = fresh;
+    positions = fresh;
+  }
+
+  if (!positions || positions.length < 2) {
+    alert("Not enough points for playback (need at least 2).");
+    return;
+  }
+
+  // Oldest → newest for playback
+  const ordered = [...positions].reverse();
+
+  stopPlayback(); // clear previous run
+
+  playback.positions = ordered;
+  playback.index = 0;
+
+  // Draw path line
+  if (map) {
+    const coords = ordered.map((p) => [p.lng, p.lat]);
+
+    if (map.getLayer(playback.lineLayerId)) {
+      map.removeLayer(playback.lineLayerId);
+    }
+    if (map.getSource(playback.lineSourceId)) {
+      map.removeSource(playback.lineSourceId);
+    }
+
+    map.addSource(playback.lineSourceId, {
+      type: "geojson",
+      data: {
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: coords
+        }
+      }
+    });
+
+    map.addLayer({
+      id: playback.lineLayerId,
+      type: "line",
+      source: playback.lineSourceId,
+      paint: {
+        "line-color": "#22c55e",
+        "line-width": 3
+      }
+    });
+  }
+
+  // Create playback marker at first point
+  if (map) {
+    const first = ordered[0];
+    playback.marker = new maplibregl.Marker({ color: "#22c55e" })
+      .setLngLat([first.lng, first.lat])
+      .addTo(map);
+
+    map.easeTo({
+      center: [first.lng, first.lat],
+      zoom: 15,
+      duration: 700
+    });
+  }
+
+  // Animate along the path
+  playback.timerId = setInterval(() => {
+    playback.index++;
+    if (playback.index >= ordered.length) {
+      stopPlayback();
+      return;
+    }
+
+    const p = ordered[playback.index];
+    if (!map || !playback.marker) return;
+
+    playback.marker.setLngLat([p.lng, p.lat]);
+    map.easeTo({
+      center: [p.lng, p.lat],
+      duration: 400
+    });
+  }, 1000); // 1 second per point
+}
+
 // ---------- Device list rendering ----------
 function renderDeviceList() {
   if (!els.deviceList) return;
@@ -362,6 +483,7 @@ function hideDevicePanel() {
   els.panel.style.display = "none";
   els.panel.classList.add("hidden");
   state.selectedId = null;
+  stopPlayback();
 }
 window.hideDevicePanel = hideDevicePanel; // used by onclick in HTML
 
@@ -385,6 +507,7 @@ async function handleDeviceClick(deviceId) {
   state.selectedId = deviceId;
   showDevicePanel();
   setActiveTab("overview");
+  stopPlayback(); // reset playback when switching devices
 
   const meta = state.devices.find((d) => d.id === deviceId) || {};
 
@@ -589,16 +712,16 @@ function wirePanelButtons() {
     });
   }
 
-  // History buttons (simple stubs for now)
+  // History playback
   if (els.btnPlayHistory) {
     els.btnPlayHistory.addEventListener("click", () => {
-      alert("Playback animation placeholder — we can wire this up later.");
+      startPlaybackForSelected();
     });
   }
 
   if (els.btnStopHistory) {
     els.btnStopHistory.addEventListener("click", () => {
-      alert("Playback stopped (placeholder).");
+      stopPlayback();
     });
   }
 
