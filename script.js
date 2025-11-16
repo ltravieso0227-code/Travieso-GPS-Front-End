@@ -33,6 +33,11 @@ const els = {
   showLabels: document.getElementById("showLabels"),
   satToggle: document.getElementById("satToggle"),
 
+  // Sidebar metrics
+  metricTotal: document.getElementById("metricTotal"),
+  metricOnline: document.getElementById("metricOnline"),
+  metricMoving: document.getElementById("metricMoving"),
+
   // Map / panel container
   mapPanel: document.querySelector(".map-panel"),
   panel: document.getElementById("deviceInfoPanel"),
@@ -119,68 +124,6 @@ function fmtLatLng(lat, lng) {
 function normalizeUrl(u) {
   if (!u) return "";
   return u.replace(/\/+$/, "");
-}
-
-/**
- * Try to infer HOW the device got its location:
- * - "gps" (satellite)
- * - "wifi" (Wi-Fi positioning)
- * - "cell" (cell tower)
- * - "unknown"
- */
-function deriveLocationSource(p) {
-  if (!p || typeof p !== "object") return "unknown";
-
-  const raw =
-    p.location_source ??
-    p.position_source ??
-    p.loc_source ??
-    p.source ??
-    p.fix_type ??
-    p.provider ??
-    null;
-
-  let v = raw ? String(raw).toLowerCase() : "";
-
-  if (v.includes("gps") || v.includes("gnss") || v.includes("sat")) {
-    return "gps";
-  }
-  if (v.includes("wifi") || v.includes("wi-fi") || v.includes("wi fi")) {
-    return "wifi";
-  }
-  if (
-    v.includes("cell") ||
-    v.includes("gsm") ||
-    v.includes("lte") ||
-    v.includes("network")
-  ) {
-    return "cell";
-  }
-
-  // Heuristics from fields
-  if (
-    p.wifi_ssid ||
-    p.wifi_bssid ||
-    (typeof p.wifi_count === "number" && p.wifi_count > 0)
-  ) {
-    return "wifi";
-  }
-
-  if (
-    p.cell_id ||
-    p.ci ||
-    p.enb_id ||
-    (typeof p.mcc === "number" && typeof p.mnc === "number")
-  ) {
-    return "cell";
-  }
-
-  // If satellites count exists, favor GPS
-  if (typeof p.satellites === "number" && p.satellites > 0) {
-    return "gps";
-  }
-
-  return "unknown";
 }
 
 // ---------- Map ----------
@@ -280,6 +223,27 @@ function findDeviceStatus(deviceId) {
   return d ? d.status || "offline" : "offline";
 }
 
+// ---------- Sidebar metrics ----------
+function updateSidebarMetrics() {
+  const total = state.devices.length;
+  const online = state.devices.filter(
+    (d) => d.status && d.status !== "offline"
+  ).length;
+  const moving = state.devices.filter(
+    (d) => d.status === "moving"
+  ).length;
+
+  if (els.metricTotal) {
+    els.metricTotal.textContent = `${total} device${total === 1 ? "" : "s"}`;
+  }
+  if (els.metricOnline) {
+    els.metricOnline.textContent = `${online} online`;
+  }
+  if (els.metricMoving) {
+    els.metricMoving.textContent = `${moving} moving`;
+  }
+}
+
 // ---------- API calls ----------
 async function fetchDevices() {
   if (!apiUrl) return;
@@ -289,6 +253,9 @@ async function fetchDevices() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     state.devices = data || [];
+
+    // Update metrics + list
+    updateSidebarMetrics();
     renderDeviceList();
     setStatus("Connected", true);
 
@@ -647,7 +614,6 @@ async function handleDeviceClick(deviceId) {
       const spd = newest.speed != null ? Number(newest.speed).toFixed(1) : "0.0";
       els.speedLabel.textContent = `${spd} mph`;
     }
-
     // Heading (simple arrow + degrees)
     if (els.headingArrow && els.headingText) {
       const heading = newest.heading ?? null;
@@ -664,44 +630,9 @@ async function handleDeviceClick(deviceId) {
         els.headingText.textContent = `${hNum.toFixed(0)}°`;
       }
     }
-
     // Ignition – placeholder until you wire a real field
     if (els.ignitionLabel) {
       els.ignitionLabel.textContent = "Unknown";
-    }
-
-    // Location method (GPS / Wi-Fi / Cell) using the "Wi-Fi" row
-    if (els.wifiLabel && els.wifiBar) {
-      const kind = deriveLocationSource(newest); // "gps" | "wifi" | "cell" | "unknown"
-      let label = "Location method unknown";
-      let pct = 0;
-
-      if (kind === "gps") {
-        label = "📡 GPS (Satellite)";
-        pct = 100;
-      } else if (kind === "wifi") {
-        label = "🛜 Wi-Fi Positioning";
-        pct = 70;
-      } else if (kind === "cell") {
-        label = "📶 Cell Tower";
-        pct = 40;
-      }
-
-      els.wifiLabel.textContent = label;
-      els.wifiBar.style.width = pct + "%";
-    }
-
-  } else {
-    // No newest position – reset some diagnostics
-    if (els.speedLabel) els.speedLabel.textContent = "0 mph";
-    if (els.headingArrow && els.headingText) {
-      els.headingArrow.textContent = "↑";
-      els.headingText.textContent = "N/A";
-    }
-    if (els.ignitionLabel) els.ignitionLabel.textContent = "Unknown";
-    if (els.wifiLabel && els.wifiBar) {
-      els.wifiLabel.textContent = "Location method unknown";
-      els.wifiBar.style.width = "0%";
     }
   }
 
