@@ -170,6 +170,34 @@ body {
   color: #6b7280;
 }
 
+/* Sidebar metrics row */
+.sidebar-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.metric-pill {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid #1f2937;
+  background: rgba(15, 23, 42, 0.85);
+  color: var(--text-muted);
+}
+
+.metric-online {
+  border-color: var(--moving);
+  color: var(--moving);
+}
+
+.metric-moving {
+  border-color: var(--idle);
+  color: var(--idle);
+}
+
 .device-list {
   margin-top: 0.5rem;
   list-style: none;
