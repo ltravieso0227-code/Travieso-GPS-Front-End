@@ -121,6 +121,46 @@ function normalizeUrl(u) {
   return u.replace(/\/+$/, "");
 }
 
+// Subscription badge helper
+function setSubscriptionBadge(lastSeenIso) {
+  if (!els.panelSubBadge) return;
+
+  els.panelSubBadge.classList.remove(
+    "badge-sub-ok",
+    "badge-sub-warning",
+    "badge-sub-danger",
+    "badge-sub-unknown"
+  );
+
+  if (!lastSeenIso) {
+    els.panelSubBadge.textContent = "Unknown";
+    els.panelSubBadge.classList.add("badge-sub-unknown");
+    return;
+  }
+
+  let days;
+  try {
+    const last = new Date(lastSeenIso).getTime();
+    const now = Date.now();
+    days = (now - last) / (1000 * 60 * 60 * 24);
+  } catch {
+    els.panelSubBadge.textContent = "Unknown";
+    els.panelSubBadge.classList.add("badge-sub-unknown");
+    return;
+  }
+
+  if (days <= 7) {
+    els.panelSubBadge.textContent = "Active";
+    els.panelSubBadge.classList.add("badge-sub-ok");
+  } else if (days <= 30) {
+    els.panelSubBadge.textContent = "At Risk";
+    els.panelSubBadge.classList.add("badge-sub-warning");
+  } else {
+    els.panelSubBadge.textContent = "Expired";
+    els.panelSubBadge.classList.add("badge-sub-danger");
+  }
+}
+
 // ---------- Map ----------
 let currentBaseStyle = "streets"; // "streets" | "satellite"
 
@@ -529,11 +569,6 @@ async function handleDeviceClick(deviceId) {
     els.panelStatusBadge.style.borderColor = color;
   }
 
-  // Subscription badge – placeholder, always "Active"
-  if (els.panelSubBadge) {
-    els.panelSubBadge.textContent = "Active";
-  }
-
   // Fetch detail + history
   const [detail, positions] = await Promise.all([
     fetchDeviceDetail(deviceId),
@@ -566,12 +601,23 @@ async function handleDeviceClick(deviceId) {
         els.batteryLabel.textContent = pct + "%";
       }
     }
+
+    // Subscription badge based on freshest last_seen we know
+    const subLast =
+      detail.last_seen ||
+      detail.last_seen_at ||
+      meta.last_seen ||
+      null;
+    setSubscriptionBadge(subLast);
   } else {
     if (els.panelAssetType) els.panelAssetType.textContent = "N/A";
     if (els.panelLastUpdated) els.panelLastUpdated.textContent = "–";
     if (els.panelOwner) els.panelOwner.textContent = "N/A";
     if (els.batteryBar) els.batteryBar.style.width = "0%";
     if (els.batteryLabel) els.batteryLabel.textContent = "–%";
+
+    // Fallback subscription state based only on meta
+    setSubscriptionBadge(meta.last_seen || null);
   }
 
   // History tab + last location + speed / heading
