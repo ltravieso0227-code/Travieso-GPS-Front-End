@@ -3,30 +3,30 @@
 
 const MAPTILER_KEY = "fWfNo8f8kAGF4RDFwHmy";
 
-// MapTiler styles
-const STYLE_STREETS = `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`;
-const STYLE_SAT = `https://api.maptiler.com/maps/hybrid/style.json?key=${MAPTILER_KEY}`;
-
 let map = null;
 let apiUrl = "";
 let apiKey = "";
 
-// will hold ids of label layers (symbol layers) for current style
-let labelLayerIds = [];
+// Track current base style + label layers
+let currentStyleId = "streets-v2";
+let labelLayers = [];
+
+// Simple playback state for history animation
+const playback = {
+  timer: null,
+  deviceId: null,
+  index: 0,
+  coords: [],
+  marker: null,
+  lineId: "history-line",
+  sourceId: "history-source"
+};
 
 const state = {
   devices: [],
   markers: {},          // deviceId -> maplibre marker
   selectedId: null,
-  historyCache: {},     // deviceId -> positions[]
-  labelsOn: true,
-  styleMode: "streets"  // "streets" | "sat"
-};
-
-// Simple playback controller for History tab
-const historyPlayback = {
-  timer: null,
-  deviceId: null
+  historyCache: {}      // deviceId -> positions[]
 };
 
 // ---------- DOM references ----------
@@ -62,11 +62,11 @@ const els = {
 
   // Tabs
   tabButtons: document.querySelectorAll(".panel-tabs .tab"),
-
-  // History tab
   tabOverview: document.getElementById("tab-overview"),
   tabHistory: document.getElementById("tab-history"),
   tabDiagnostics: document.getElementById("tab-diagnostics"),
+
+  // History tab
   btnPlayHistory: document.getElementById("btnPlayHistory"),
   btnStopHistory: document.getElementById("btnStopHistory"),
   historyList: document.getElementById("historyList"),
@@ -126,68 +126,55 @@ function normalizeUrl(u) {
   return u.replace(/\/+$/, "");
 }
 
-// Choose a cute emoji based on asset type / name
-function pickAssetIcon(detail, meta) {
-  const source = (detail?.asset_type || meta?.asset_type || meta?.name || "").toLowerCase();
-  if (source.includes("truck") || source.includes("food")) return "🚚";
-  if (source.includes("van")) return "🚐";
-  if (source.includes("car")) return "🚗";
-  if (source.includes("trailer")) return "🚛";
-  if (source.includes("boat")) return "🛥️";
-  return "📦";
+// ---------- Map & style helpers ----------
+function styleUrl(id) {
+  return `https://api.maptiler.com/maps/${id}/style.json?key=${MAPTILER_KEY}`;
 }
 
-// ---------- Map & style / label toggles ----------
+function applyMapStyle(id) {
+  if (!map) return;
+  currentStyleId = id;
+  map.setStyle(styleUrl(id));
+}
+
+function refreshLabelLayers() {
+  if (!map) return;
+  const style = map.getStyle();
+  if (!style || !style.layers) return;
+
+  labelLayers = style.layers
+    .filter((l) => l.type === "symbol")
+    .map((l) => l.id);
+
+  const show = els.showLabels ? els.showLabels.checked : true;
+  setLabelsVisibility(show);
+}
+
+function setLabelsVisibility(show) {
+  if (!map || !labelLayers.length) return;
+  const visibility = show ? "visible" : "none";
+  labelLayers.forEach((id) => {
+    if (map.getLayer(id)) {
+      map.setLayoutProperty(id, "visibility", visibility);
+    }
+  });
+}
+
+// ---------- Map ----------
 function initMap() {
   map = new maplibregl.Map({
     container: "map",
-    style: STYLE_STREETS,
+    style: styleUrl(currentStyleId),
     center: [-80.19, 25.76], // Miami-ish
     zoom: 10
   });
 
   map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-  // Whenever style changes or loads, recompute label layers and apply visibility
+  // When style changes (including first load), rebuild label layer list
   map.on("styledata", () => {
     refreshLabelLayers();
-    applyLabelsVisibility();
   });
-}
-
-// gather IDs of all symbol layers so we can hide/show labels
-function refreshLabelLayers() {
-  if (!map) return;
-  const style = map.getStyle();
-  if (!style || !style.layers) return;
-
-  labelLayerIds = [];
-  for (const layer of style.layers) {
-    if (layer.type === "symbol") {
-      labelLayerIds.push(layer.id);
-    }
-  }
-}
-
-// actually turn labels on/off for current style
-function applyLabelsVisibility() {
-  if (!map) return;
-  const visible = state.labelsOn ? "visible" : "none";
-
-  labelLayerIds.forEach((id) => {
-    try {
-      map.setLayoutProperty(id, "visibility", visible);
-    } catch (e) {
-      // ignore if layer doesn't exist in this style
-    }
-  });
-}
-
-function switchStyle(mode) {
-  if (!map) return;
-  state.styleMode = mode;
-  const styleUrl = mode === "sat" ? STYLE_SAT : STYLE_STREETS;
-  map.setStyle(styleUrl);
 }
 
 function upsertMarker(deviceId, lat, lng, status = "idle") {
@@ -223,6 +210,100 @@ function focusOnDevice(deviceId) {
 function findDeviceStatus(deviceId) {
   const d = state.devices.find((x) => x.id === deviceId);
   return d ? d.status || "offline" : "offline";
+}
+
+// ---------- Playback helpers ----------
+function clearPlayback() {
+  if (playback.timer) {
+    clearInterval(playback.timer);
+    playback.timer = null;
+  }
+  if (playback.marker) {
+    playback.marker.remove();
+    playback.marker = null;
+  }
+  if (map) {
+    if (map.getLayer(playback.lineId)) {
+      map.removeLayer(playback.lineId);
+    }
+    if (map.getSource(playback.sourceId)) {
+      map.removeSource(playback.sourceId);
+    }
+  }
+  playback.deviceId = null;
+  playback.coords = [];
+  playback.index = 0;
+}
+
+function startPlayback(deviceId) {
+  if (!map) return;
+  clearPlayback();
+
+  const positions = state.historyCache[deviceId] || [];
+  if (positions.length < 2) {
+    alert("Not enough points for playback (need at least 2).");
+    return;
+  }
+
+  // Positions are newest-first from backend; reverse to play oldest → newest
+  const coords = positions
+    .slice()
+    .reverse()
+    .map((p) => [p.lng, p.lat]);
+
+  playback.deviceId = deviceId;
+  playback.coords = coords;
+  playback.index = 0;
+
+  const lineFeature = {
+    type: "Feature",
+    geometry: { type: "LineString", coordinates: coords },
+    properties: {}
+  };
+
+  if (map.getSource(playback.sourceId)) {
+    map.getSource(playback.sourceId).setData(lineFeature);
+  } else {
+    map.addSource(playback.sourceId, {
+      type: "geojson",
+      data: lineFeature
+    });
+
+    map.addLayer({
+      id: playback.lineId,
+      type: "line",
+      source: playback.sourceId,
+      paint: {
+        "line-color": "#22c55e",
+        "line-width": 3,
+        "line-opacity": 0.85
+      }
+    });
+  }
+
+  playback.marker = new maplibregl.Marker({ color: "#22c55e" })
+    .setLngLat(coords[0])
+    .addTo(map);
+
+  map.easeTo({ center: coords[0], zoom: 15, duration: 600 });
+
+  playback.timer = setInterval(() => {
+    // If device changed mid-playback, stop
+    if (state.selectedId !== deviceId) {
+      clearPlayback();
+      return;
+    }
+
+    playback.index += 1;
+    if (playback.index >= playback.coords.length) {
+      clearPlayback();
+      return;
+    }
+
+    const coord = playback.coords[playback.index];
+    playback.marker.setLngLat(coord);
+    map.easeTo({ center: coord, duration: 500 });
+  }, 800);
 }
 
 // ---------- API calls ----------
@@ -379,6 +460,7 @@ function hideDevicePanel() {
   els.panel.style.display = "none";
   els.panel.classList.add("hidden");
   state.selectedId = null;
+  clearPlayback();
 }
 window.hideDevicePanel = hideDevicePanel; // used by onclick in HTML
 
@@ -398,38 +480,114 @@ function setActiveTab(tabName) {
   if (pane) pane.classList.add("active");
 }
 
-// Subscription badge helper
-function updateSubscriptionBadge(detail, meta) {
-  if (!els.panelSubBadge) return;
+async function handleDeviceClick(deviceId) {
+  state.selectedId = deviceId;
+  clearPlayback();
+  showDevicePanel();
+  setActiveTab("overview");
 
-  let status =
-    detail?.subscription_status ||
-    meta?.subscription_status ||
-    "active";
+  const meta = state.devices.find((d) => d.id === deviceId) || {};
 
-  if (detail?.subscription_expires_at) {
-    const exp = new Date(detail.subscription_expires_at);
-    const diffDays = (exp - new Date()) / (1000 * 60 * 60 * 24);
-    if (diffDays < 0) status = "expired";
-    else if (diffDays < 7 && status === "active") status = "expiring_soon";
+  // Quick header fields
+  if (els.panelDeviceName) {
+    els.panelDeviceName.textContent = meta.name || deviceId;
+  }
+  if (els.panelDeviceId) {
+    els.panelDeviceId.textContent = `ID: ${deviceId}`;
+  }
+  if (els.panelStatusBadge) {
+    const status = meta.status || "offline";
+    els.panelStatusBadge.textContent =
+      status.charAt(0).toUpperCase() + status.slice(1);
+    let color = "#fca5a5";
+    if (status === "moving") color = "#22c55e";
+    else if (status === "idle") color = "#facc15";
+    els.panelStatusBadge.style.color = color;
+    els.panelStatusBadge.style.borderColor = color;
   }
 
-  const badge = els.panelSubBadge;
-  badge.classList.remove("badge-sub-ok", "badge-sub-warning", "badge-sub-expired");
+  // Subscription badge – placeholder, always "Active"
+  if (els.panelSubBadge) {
+    els.panelSubBadge.textContent = "Active";
+  }
 
-  if (status === "expired") {
-    badge.textContent = "EXPIRED";
-    badge.classList.add("badge-sub-expired");
-  } else if (status === "expiring_soon") {
-    badge.textContent = "RENEW SOON";
-    badge.classList.add("badge-sub-warning");
+  // Fetch detail + history
+  const [detail, positions] = await Promise.all([
+    fetchDeviceDetail(deviceId),
+    fetchDevicePositions(deviceId, 50)
+  ]);
+
+  state.historyCache[deviceId] = positions || [];
+
+  // Overview from detail
+  if (detail) {
+    if (els.panelAssetType) {
+      els.panelAssetType.textContent = detail.asset_type || "N/A";
+    }
+    if (els.panelLastUpdated) {
+      els.panelLastUpdated.textContent = fmtTime(detail.last_seen);
+    }
+    if (els.panelOwner) {
+      // Right now we don't have "owner" separate, so reusing description
+      els.panelOwner.textContent = detail.description || "N/A";
+    }
+    // Battery for diagnostics
+    if (els.batteryBar && els.batteryLabel) {
+      const b = detail.battery ?? null;
+      if (b == null) {
+        els.batteryBar.style.width = "0%";
+        els.batteryLabel.textContent = "–%";
+      } else {
+        const pct = Math.max(0, Math.min(100, Number(b)));
+        els.batteryBar.style.width = pct + "%";
+        els.batteryLabel.textContent = pct + "%";
+      }
+    }
   } else {
-    badge.textContent = "ACTIVE";
-    badge.classList.add("badge-sub-ok");
+    if (els.panelAssetType) els.panelAssetType.textContent = "N/A";
+    if (els.panelLastUpdated) els.panelLastUpdated.textContent = "–";
+    if (els.panelOwner) els.panelOwner.textContent = "N/A";
+    if (els.batteryBar) els.batteryBar.style.width = "0%";
+    if (els.batteryLabel) els.batteryLabel.textContent = "–%";
   }
+
+  // History tab + last location + speed / heading
+  renderHistory(deviceId);
+
+  // Diagnostics extras from newest position if present
+  const newest = (state.historyCache[deviceId] || [])[0];
+  if (newest) {
+    // Speed
+    if (els.speedLabel) {
+      const spd = newest.speed != null ? Number(newest.speed).toFixed(1) : "0.0";
+      els.speedLabel.textContent = `${spd} mph`;
+    }
+    // Heading (simple arrow + degrees)
+    if (els.headingArrow && els.headingText) {
+      const heading = newest.heading ?? null;
+      if (heading == null) {
+        els.headingArrow.textContent = "↑";
+        els.headingText.textContent = "N/A";
+      } else {
+        const hNum = Number(heading);
+        let arrow = "↑";
+        if (hNum > 45 && hNum <= 135) arrow = "→";
+        else if (hNum > 135 && hNum <= 225) arrow = "↓";
+        else if (hNum > 225 && hNum <= 315) arrow = "←";
+        els.headingArrow.textContent = arrow;
+        els.headingText.textContent = `${hNum.toFixed(0)}°`;
+      }
+    }
+    // Ignition – placeholder until you wire a real field
+    if (els.ignitionLabel) {
+      els.ignitionLabel.textContent = "Unknown";
+    }
+  }
+
+  // Focus map on this device
+  focusOnDevice(deviceId);
 }
 
-// ---------- History rendering / playback ----------
 function renderHistory(deviceId) {
   const positions = state.historyCache[deviceId] || [];
   if (!els.historyList) return;
@@ -473,153 +631,8 @@ function renderHistory(deviceId) {
     els.historyList.appendChild(row);
   });
 
+  // Update marker for newest coord
   upsertMarker(deviceId, newest.lat, newest.lng, findDeviceStatus(deviceId));
-}
-
-function stopHistoryPlayback() {
-  if (historyPlayback.timer) {
-    clearInterval(historyPlayback.timer);
-    historyPlayback.timer = null;
-  }
-  historyPlayback.deviceId = null;
-}
-
-async function startHistoryPlayback(deviceId) {
-  const cached = state.historyCache[deviceId];
-  const positions =
-    (cached && cached.length ? cached : await fetchDevicePositions(deviceId, 50)) || [];
-
-  if (!positions.length) {
-    alert("No history to play.");
-    return;
-  }
-  state.historyCache[deviceId] = positions;
-
-  stopHistoryPlayback();
-  historyPlayback.deviceId = deviceId;
-
-  const path = positions.slice().reverse(); // oldest -> newest
-  let idx = 0;
-
-  historyPlayback.timer = setInterval(() => {
-    if (idx >= path.length) {
-      stopHistoryPlayback();
-      return;
-    }
-    const p = path[idx++];
-    upsertMarker(deviceId, p.lat, p.lng, findDeviceStatus(deviceId));
-    if (map) {
-      map.easeTo({
-        center: [p.lng, p.lat],
-        zoom: 15,
-        duration: 350
-      });
-    }
-  }, 500);
-}
-
-// ---------- Device click handler ----------
-async function handleDeviceClick(deviceId) {
-  state.selectedId = deviceId;
-  showDevicePanel();
-  setActiveTab("overview");
-
-  const meta = state.devices.find((d) => d.id === deviceId) || {};
-
-  // Quick header fields (before async)
-  if (els.panelDeviceName) {
-    els.panelDeviceName.textContent = meta.name || deviceId;
-  }
-  if (els.panelDeviceId) {
-    els.panelDeviceId.textContent = `ID: ${deviceId}`;
-  }
-  if (els.panelStatusBadge) {
-    const status = meta.status || "offline";
-    els.panelStatusBadge.textContent =
-      status.charAt(0).toUpperCase() + status.slice(1);
-    let color = "#fca5a5";
-    if (status === "moving") color = "#22c55e";
-    else if (status === "idle") color = "#facc15";
-    els.panelStatusBadge.style.color = color;
-    els.panelStatusBadge.style.borderColor = color;
-  }
-
-  // Default subscription badge
-  updateSubscriptionBadge(null, meta);
-
-  const [detail, positions] = await Promise.all([
-    fetchDeviceDetail(deviceId),
-    fetchDevicePositions(deviceId, 50)
-  ]);
-
-  state.historyCache[deviceId] = positions || [];
-
-  if (detail) {
-    if (els.panelAssetType) {
-      els.panelAssetType.textContent = detail.asset_type || "N/A";
-    }
-    if (els.panelLastUpdated) {
-      els.panelLastUpdated.textContent = fmtTime(detail.last_seen);
-    }
-    if (els.panelOwner) {
-      els.panelOwner.textContent = detail.description || "N/A";
-    }
-
-    if (els.panelAssetIcon) {
-      els.panelAssetIcon.textContent = pickAssetIcon(detail, meta);
-    }
-
-    updateSubscriptionBadge(detail, meta);
-
-    if (els.batteryBar && els.batteryLabel) {
-      const b = detail.battery ?? null;
-      if (b == null) {
-        els.batteryBar.style.width = "0%";
-        els.batteryLabel.textContent = "–%";
-      } else {
-        const pct = Math.max(0, Math.min(100, Number(b)));
-        els.batteryBar.style.width = pct + "%";
-        els.batteryLabel.textContent = pct + "%";
-      }
-    }
-  } else {
-    if (els.panelAssetType) els.panelAssetType.textContent = "N/A";
-    if (els.panelLastUpdated) els.panelLastUpdated.textContent = "–";
-    if (els.panelOwner) els.panelOwner.textContent = "N/A";
-    if (els.panelAssetIcon) els.panelAssetIcon.textContent = "📦";
-    if (els.batteryBar) els.batteryBar.style.width = "0%";
-    if (els.batteryLabel) els.batteryLabel.textContent = "–%";
-  }
-
-  renderHistory(deviceId);
-
-  const newest = (state.historyCache[deviceId] || [])[0];
-  if (newest) {
-    if (els.speedLabel) {
-      const spd = newest.speed != null ? Number(newest.speed).toFixed(1) : "0.0";
-      els.speedLabel.textContent = `${spd} mph`;
-    }
-    if (els.headingArrow && els.headingText) {
-      const heading = newest.heading ?? null;
-      if (heading == null) {
-        els.headingArrow.textContent = "↑";
-        els.headingText.textContent = "N/A";
-      } else {
-        const hNum = Number(heading);
-        let arrow = "↑";
-        if (hNum > 45 && hNum <= 135) arrow = "→";
-        else if (hNum > 135 && hNum <= 225) arrow = "↓";
-        else if (hNum > 225 && hNum <= 315) arrow = "←";
-        els.headingArrow.textContent = arrow;
-        els.headingText.textContent = `${hNum.toFixed(0)}°`;
-      }
-    }
-    if (els.ignitionLabel) {
-      els.ignitionLabel.textContent = "Unknown";
-    }
-  }
-
-  focusOnDevice(deviceId);
 }
 
 // ---------- Button wiring ----------
@@ -629,13 +642,6 @@ function wirePanelButtons() {
     els.btnLocate.addEventListener("click", () => {
       if (!state.selectedId) return;
       focusOnDevice(state.selectedId);
-
-      const marker = state.markers[state.selectedId];
-      if (marker && marker.getElement) {
-        const el = marker.getElement();
-        el.classList.add("marker-ping");
-        setTimeout(() => el.classList.remove("marker-ping"), 1200);
-      }
     });
   }
 
@@ -690,13 +696,13 @@ function wirePanelButtons() {
         alert("Select a device first.");
         return;
       }
-      startHistoryPlayback(state.selectedId);
+      startPlayback(state.selectedId);
     });
   }
 
   if (els.btnStopHistory) {
     els.btnStopHistory.addEventListener("click", () => {
-      stopHistoryPlayback();
+      clearPlayback();
     });
   }
 
@@ -722,18 +728,16 @@ function wirePanelButtons() {
 
   // Map controls toggles
   if (els.showLabels) {
+    // default ON
     els.showLabels.checked = true;
     els.showLabels.addEventListener("change", () => {
-      state.labelsOn = !!els.showLabels.checked;
-      applyLabelsVisibility();
+      setLabelsVisibility(els.showLabels.checked);
     });
   }
-
   if (els.satToggle) {
-    els.satToggle.checked = false;
     els.satToggle.addEventListener("change", () => {
-      const mode = els.satToggle.checked ? "sat" : "streets";
-      switchStyle(mode);
+      const styleId = els.satToggle.checked ? "hybrid" : "streets-v2";
+      applyMapStyle(styleId);
     });
   }
 }
@@ -769,6 +773,7 @@ function initSettings() {
     });
   }
 
+  // Open overlay automatically if API URL missing
   if (!apiUrl && els.loginOverlay) {
     els.loginOverlay.classList.remove("hidden");
   }
@@ -780,8 +785,11 @@ function boot() {
   initMap();
   wirePanelButtons();
 
+  // Initial load
   fetchDevices();
-  setInterval(fetchDevices, 10000); // 10s auto-refresh
+
+  // Poll every 10 seconds (matches "Auto-refresh: 10s" label)
+  setInterval(fetchDevices, 10000);
 }
 
 // Run immediately (script is at end of <body>, DOM is ready)
