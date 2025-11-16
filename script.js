@@ -7,26 +7,15 @@ let map = null;
 let apiUrl = "";
 let apiKey = "";
 
-// Track current base style + label layers
-let currentStyleId = "streets-v2";
-let labelLayers = [];
-
-// Simple playback state for history animation
-const playback = {
-  timer: null,
-  deviceId: null,
-  index: 0,
-  coords: [],
-  marker: null,
-  lineId: "history-line",
-  sourceId: "history-source"
-};
+// Playback state (for history animation)
+let playbackTimer = null;
+let playbackIndex = 0;
 
 const state = {
   devices: [],
   markers: {},          // deviceId -> maplibre marker
   selectedId: null,
-  historyCache: {}      // deviceId -> positions[]
+  historyCache: {}      // deviceId -> positions[] (newest first)
 };
 
 // ---------- DOM references ----------
@@ -126,55 +115,16 @@ function normalizeUrl(u) {
   return u.replace(/\/+$/, "");
 }
 
-// ---------- Map & style helpers ----------
-function styleUrl(id) {
-  return `https://api.maptiler.com/maps/${id}/style.json?key=${MAPTILER_KEY}`;
-}
-
-function applyMapStyle(id) {
-  if (!map) return;
-  currentStyleId = id;
-  map.setStyle(styleUrl(id));
-}
-
-function refreshLabelLayers() {
-  if (!map) return;
-  const style = map.getStyle();
-  if (!style || !style.layers) return;
-
-  labelLayers = style.layers
-    .filter((l) => l.type === "symbol")
-    .map((l) => l.id);
-
-  const show = els.showLabels ? els.showLabels.checked : true;
-  setLabelsVisibility(show);
-}
-
-function setLabelsVisibility(show) {
-  if (!map || !labelLayers.length) return;
-  const visibility = show ? "visible" : "none";
-  labelLayers.forEach((id) => {
-    if (map.getLayer(id)) {
-      map.setLayoutProperty(id, "visibility", visibility);
-    }
-  });
-}
-
 // ---------- Map ----------
 function initMap() {
   map = new maplibregl.Map({
     container: "map",
-    style: styleUrl(currentStyleId),
+    style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
     center: [-80.19, 25.76], // Miami-ish
     zoom: 10
   });
 
   map.addControl(new maplibregl.NavigationControl(), "top-right");
-
-  // When style changes (including first load), rebuild label layer list
-  map.on("styledata", () => {
-    refreshLabelLayers();
-  });
 }
 
 function upsertMarker(deviceId, lat, lng, status = "idle") {
@@ -210,100 +160,6 @@ function focusOnDevice(deviceId) {
 function findDeviceStatus(deviceId) {
   const d = state.devices.find((x) => x.id === deviceId);
   return d ? d.status || "offline" : "offline";
-}
-
-// ---------- Playback helpers ----------
-function clearPlayback() {
-  if (playback.timer) {
-    clearInterval(playback.timer);
-    playback.timer = null;
-  }
-  if (playback.marker) {
-    playback.marker.remove();
-    playback.marker = null;
-  }
-  if (map) {
-    if (map.getLayer(playback.lineId)) {
-      map.removeLayer(playback.lineId);
-    }
-    if (map.getSource(playback.sourceId)) {
-      map.removeSource(playback.sourceId);
-    }
-  }
-  playback.deviceId = null;
-  playback.coords = [];
-  playback.index = 0;
-}
-
-function startPlayback(deviceId) {
-  if (!map) return;
-  clearPlayback();
-
-  const positions = state.historyCache[deviceId] || [];
-  if (positions.length < 2) {
-    alert("Not enough points for playback (need at least 2).");
-    return;
-  }
-
-  // Positions are newest-first from backend; reverse to play oldest → newest
-  const coords = positions
-    .slice()
-    .reverse()
-    .map((p) => [p.lng, p.lat]);
-
-  playback.deviceId = deviceId;
-  playback.coords = coords;
-  playback.index = 0;
-
-  const lineFeature = {
-    type: "Feature",
-    geometry: { type: "LineString", coordinates: coords },
-    properties: {}
-  };
-
-  if (map.getSource(playback.sourceId)) {
-    map.getSource(playback.sourceId).setData(lineFeature);
-  } else {
-    map.addSource(playback.sourceId, {
-      type: "geojson",
-      data: lineFeature
-    });
-
-    map.addLayer({
-      id: playback.lineId,
-      type: "line",
-      source: playback.sourceId,
-      paint: {
-        "line-color": "#22c55e",
-        "line-width": 3,
-        "line-opacity": 0.85
-      }
-    });
-  }
-
-  playback.marker = new maplibregl.Marker({ color: "#22c55e" })
-    .setLngLat(coords[0])
-    .addTo(map);
-
-  map.easeTo({ center: coords[0], zoom: 15, duration: 600 });
-
-  playback.timer = setInterval(() => {
-    // If device changed mid-playback, stop
-    if (state.selectedId !== deviceId) {
-      clearPlayback();
-      return;
-    }
-
-    playback.index += 1;
-    if (playback.index >= playback.coords.length) {
-      clearPlayback();
-      return;
-    }
-
-    const coord = playback.coords[playback.index];
-    playback.marker.setLngLat(coord);
-    map.easeTo({ center: coord, duration: 500 });
-  }, 800);
 }
 
 // ---------- API calls ----------
@@ -451,16 +307,17 @@ function renderDeviceList() {
 // ---------- Panel logic ----------
 function showDevicePanel() {
   if (!els.panel) return;
+
   els.panel.style.display = "flex";
   els.panel.classList.remove("hidden");
 }
 
 function hideDevicePanel() {
   if (!els.panel) return;
+  stopHistoryPlayback();
   els.panel.style.display = "none";
   els.panel.classList.add("hidden");
   state.selectedId = null;
-  clearPlayback();
 }
 window.hideDevicePanel = hideDevicePanel; // used by onclick in HTML
 
@@ -481,8 +338,10 @@ function setActiveTab(tabName) {
 }
 
 async function handleDeviceClick(deviceId) {
+  // Stop any existing playback when switching devices
+  stopHistoryPlayback();
+
   state.selectedId = deviceId;
-  clearPlayback();
   showDevicePanel();
   setActiveTab("overview");
 
@@ -635,6 +494,72 @@ function renderHistory(deviceId) {
   upsertMarker(deviceId, newest.lat, newest.lng, findDeviceStatus(deviceId));
 }
 
+// ---------- Playback logic (History tab) ----------
+function startHistoryPlayback() {
+  const deviceId = state.selectedId;
+  if (!deviceId) {
+    alert("Select a device first.");
+    return;
+  }
+  if (!map) {
+    alert("Map is not ready.");
+    return;
+  }
+
+  const positions = state.historyCache[deviceId] || [];
+
+  // We do NOT mutate positions; we use a copy
+  const seq = positions.slice().reverse(); // oldest -> newest
+
+  if (seq.length < 2) {
+    alert("Not enough points for playback (need at least 2).");
+    return;
+  }
+
+  // Stop any existing playback first
+  stopHistoryPlayback();
+
+  let i = 0;
+  playbackIndex = 0;
+
+  const status = findDeviceStatus(deviceId);
+
+  const step = () => {
+    if (i >= seq.length) {
+      stopHistoryPlayback();
+      return;
+    }
+    const p = seq[i];
+    if (p && p.lat != null && p.lng != null) {
+      upsertMarker(deviceId, p.lat, p.lng, status);
+      map.easeTo({
+        center: [p.lng, p.lat],
+        zoom: 15,
+        duration: 500
+      });
+      if (els.speedLabel) {
+        const spd = p.speed != null ? Number(p.speed).toFixed(1) : "0.0";
+        els.speedLabel.textContent = `${spd} mph`;
+      }
+      if (els.panelLastLocation) {
+        els.panelLastLocation.textContent = fmtLatLng(p.lat, p.lng);
+      }
+    }
+    i += 1;
+  };
+
+  // Kick off immediately, then repeat
+  step();
+  playbackTimer = setInterval(step, 1000);
+}
+
+function stopHistoryPlayback() {
+  if (playbackTimer) {
+    clearInterval(playbackTimer);
+    playbackTimer = null;
+  }
+}
+
 // ---------- Button wiring ----------
 function wirePanelButtons() {
   // Locate
@@ -689,20 +614,16 @@ function wirePanelButtons() {
     });
   }
 
-  // History playback
+  // History buttons
   if (els.btnPlayHistory) {
     els.btnPlayHistory.addEventListener("click", () => {
-      if (!state.selectedId) {
-        alert("Select a device first.");
-        return;
-      }
-      startPlayback(state.selectedId);
+      startHistoryPlayback();
     });
   }
 
   if (els.btnStopHistory) {
     els.btnStopHistory.addEventListener("click", () => {
-      clearPlayback();
+      stopHistoryPlayback();
     });
   }
 
@@ -726,18 +647,15 @@ function wirePanelButtons() {
     });
   });
 
-  // Map controls toggles
+  // Map controls toggles (stubs so they don't error)
   if (els.showLabels) {
-    // default ON
-    els.showLabels.checked = true;
     els.showLabels.addEventListener("change", () => {
-      setLabelsVisibility(els.showLabels.checked);
+      console.log("Labels toggle:", els.showLabels.checked);
     });
   }
   if (els.satToggle) {
     els.satToggle.addEventListener("change", () => {
-      const styleId = els.satToggle.checked ? "hybrid" : "streets-v2";
-      applyMapStyle(styleId);
+      console.log("Satellite toggle:", els.satToggle.checked);
     });
   }
 }
